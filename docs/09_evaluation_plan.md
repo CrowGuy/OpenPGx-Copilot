@@ -880,11 +880,84 @@ Unsupported input tests pass if:
 ```text
 1. Unsupported markers never produce interpretations.
 2. Deferred traits never produce interpretations.
-3. Invalid rsID inputs are rejected before rule matching.
-4. Invalid genotype inputs are rejected before rule matching.
-5. Missing required fields return structured errors.
+3. Invalid rsID inputs are recorded as per-input invalid_input and excluded from matching.
+4. Invalid genotype inputs are recorded as per-input invalid_input and excluded from matching.
+5. Missing required fields return a top-level schema-fatal error (HTTP 400).
 6. Incomplete multi-marker inputs do not produce partial interpretations.
 7. Supported but unmatched genotypes do not produce inferred results.
+```
+
+## 9a. Multi-Input (Batch) Tests
+
+These tests pin the mixed-input semantics so golden tests stay stable.
+
+#### Test: mixed batch yields partial_success (release-blocking)
+
+Input: one matched (rs671 AG), one unsupported (rs999999), one invalid (rsABC / XZ) in a single request.
+
+Expected:
+
+```text
+1. API status is ok and HTTP is 200 (one bad entry does not fail the request).
+2. interpretation_status is partial_success.
+3. input_results[] has one entry per input, with statuses matched, unsupported_marker, invalid_input.
+4. matches[] contains only the rs671 rule; invalid/unsupported inputs produce no interpretation.
+```
+
+#### Test: exact duplicate is deduplicated
+
+Input: rs671 AG listed twice.
+
+Expected:
+
+```text
+1. The second entry is duplicate_ignored with a warning.
+2. Only one matched result is produced for rs671.
+```
+
+#### Test: conflicting genotype for same rsID is excluded
+
+Input: rs671 AG and rs671 GG in the same request.
+
+Expected:
+
+```text
+1. Both entries are conflicted_input.
+2. rs671 is excluded from rule matching and produces no interpretation.
+```
+
+#### Test: single invalid entry does not fail the batch
+
+Input: one valid matched entry plus one entry with invalid genotype format.
+
+Expected:
+
+```text
+1. HTTP 200, API status ok.
+2. The valid entry matches; the invalid entry is invalid_input.
+3. No top-level 400 is returned for the single bad entry.
+```
+
+#### Test: top-level schema-fatal fails the whole request
+
+Input: missing module, or missing/empty genotypes, or invalid input_type.
+
+Expected:
+
+```text
+1. HTTP 400 and API status error.
+2. No genotype is processed and no input_results[] is returned.
+```
+
+#### Test: multi-trait match only when explicitly approved
+
+Input: an input that could map to multiple traits.
+
+Expected:
+
+```text
+1. One result is returned unless an explicitly reviewed multi-trait mapping exists.
+2. The LLM does not add extra trait interpretations beyond matches[].
 ```
 
 ## 10. LLM Output Validation Tests
@@ -1314,6 +1387,10 @@ The following failures are release-blocking:
 14. Non-synthetic user_id accepted for processing.
 15. Free-text (query, user_id) persisted to durable storage or written to logs in cleartext.
 16. Free-text used as domain interpretation input to the rule engine or LLM.
+17. A single invalid, unsupported, or conflicted entry failing the whole batch instead of being a per-input result.
+18. Conflicted (same rsID, differing genotype) input producing an interpretation instead of conflicted_input.
+19. Invalid, unsupported, unmatched, conflicted, or duplicate input filled in as an interpretation.
+20. interpretation_status not matching the per-input results (non-deterministic aggregation).
 ```
 
 Non-blocking warnings may include:
@@ -1391,6 +1468,7 @@ Before releasing v0.1, the following must pass:
 5. LLM output validation tests.
 6. Regression tests.
 7. API integration tests for the four v0.1 endpoints.
+8. Multi-input (batch) tests: mixed partial_success, dedup, conflict, per-input invalid, and top-level schema-fatal.
 ```
 
 The release-blocking trait bar is MVP-min: ALDH2 (rs671) must work end to end as one active rule. Additional traits are MVP-full targets; their tests are run but do not block release. The candidate-only compiler prototype is non-release-blocking for v0.1.
@@ -1407,6 +1485,7 @@ Release must be blocked if:
 7. Required safety messages are missing.
 8. Missing or non-synthetic input_type is accepted, or non-synthetic user_id is accepted.
 9. Free-text is persisted, logged in cleartext, or used as domain interpretation input.
+10. A single invalid/unsupported/conflicted entry fails the whole batch, or conflicted/invalid/duplicate input is interpreted, or interpretation_status is not a deterministic function of the per-input results.
 ```
 
 ## 18. Future PGx Evaluation Extension

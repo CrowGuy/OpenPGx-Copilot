@@ -165,14 +165,31 @@ Error detail example:
 
 ## 6. Common Status Values
 
-API-level status values:
+v0.1 uses two levels of status plus a per-input status.
+
+API-level `status` — did the service process the request at all:
 
 ```text
 ok
 error
 ```
 
-Interpretation-level status values:
+`error` (with HTTP 400) is returned only for a top-level schema-fatal request
+(malformed JSON, missing required field, invalid `input_type`, invalid
+`user_id`, or `genotypes` missing/empty). A single bad genotype entry does not
+make the request `error`; see section 7.6a.
+
+Domain-level `interpretation_status` — the overall interpretation outcome of a
+processed (`ok`) request:
+
+```text
+matched
+partial_success
+no_match
+blocked_by_safety
+```
+
+Per-input status — appears on every entry in `input_results[]`:
 
 ```text
 matched
@@ -180,8 +197,8 @@ unsupported_marker
 unmatched_genotype
 insufficient_markers
 invalid_input
-blocked_by_safety
-out_of_scope
+conflicted_input
+duplicate_ignored
 ```
 
 Rule/evidence set status values:
@@ -339,19 +356,28 @@ educational_explanation
 
 ### 7.6 Request Validation
 
-The service must validate:
+Validation has two levels.
+
+Top-level (schema-fatal): if any of these fail, the service must reject the whole request with HTTP 400 and API `status` `error`; no genotype is processed:
 
 ```text
 1. Request body is valid JSON.
 2. module is supported.
 3. input_type is present and equals `synthetic` (else 400 invalid_input_type).
 4. user_id, if present, matches the synthetic identifier pattern (else 400 invalid_user_id).
-5. genotypes is present and non-empty.
-6. rsID format is valid.
-7. genotype format is valid.
-8. response_mode is supported.
-9. query does not require blocked outputs.
+5. genotypes is present, is an array, and is non-empty.
+6. response_mode is supported.
 ```
+
+Per-input (not schema-fatal): the following are evaluated per genotype entry and recorded in `input_results[]` (see 7.6a); they never fail the whole request:
+
+```text
+1. rsID format valid; otherwise that entry is invalid_input.
+2. genotype format valid; otherwise that entry is invalid_input.
+3. Duplicate and conflicting entries are handled per 7.6a.
+```
+
+`query` is used only for safety routing; a query that requests blocked outputs drives the safety route, it does not by itself fail validation.
 
 v0.1 rsID format:
 
@@ -390,6 +416,82 @@ ABC
 1/2
 unknown
 not available
+```
+
+### 7.6a Mixed / Multi-Input Semantics
+
+`genotypes` is an array and `POST /pgx/check` supports mixed input: a single request may contain matched, unsupported, unmatched, invalid, duplicate, and conflicting entries at once. The rules below are deterministic so golden tests stay stable.
+
+The response uses two arrays: `input_results[]` accounts for every input marker (one entry each), and `results[]` carries one interpretation per matched rule. A multi-marker rule (for example TAS2R38 with three markers) produces several matched `input_results` that share one `matched_rule_id` and map to a single `results[]` entry.
+
+```text
+1. Every input entry appears exactly once in input_results[] with its own per-input status.
+2. A single invalid entry does not fail the request; it is invalid_input in input_results[].
+   The request fails only on a top-level schema-fatal error (see 7.6).
+3. Exact duplicate normalized inputs are deduplicated: the first is processed, later
+   identical entries get status duplicate_ignored, and a warning is emitted.
+4. Same rsID with a differing normalized genotype is a conflict: every entry for that
+   rsID gets status conflicted_input and that rsID is excluded from rule matching.
+5. A matched input carries matched_rule_id; the full interpretation for that rule
+   appears once in results[].
+6. unsupported_marker, unmatched_genotype, insufficient_markers, invalid_input, and
+   conflicted_input are terminal for that input; they must never be filled in as an
+   interpretation by the LLM.
+7. One input contributes to one matched rule unless an explicitly reviewed and approved
+   multi-trait mapping exists; only then may one input contribute to multiple results.
+```
+
+The overall `interpretation_status` is derived deterministically (ignoring `duplicate_ignored` entries):
+
+```text
+matched         - at least one entry matched and every remaining entry also matched.
+partial_success - at least one entry matched and at least one did not
+                  (unsupported / unmatched / invalid / conflicted).
+no_match        - no entry matched.
+blocked_by_safety - the safety route refused the request as a whole; per-input
+                  matching is not performed and input_results may be empty.
+```
+
+Example mixed response:
+
+```json
+{
+  "request_id": "req-010",
+  "api_version": "0.1",
+  "status": "ok",
+  "interpretation_status": "partial_success",
+  "module": "wellness_traits",
+  "input_type": "synthetic",
+  "safety": { "route": "allowed" },
+  "rule_set": { "rule_set_id": "wellness_rules_v0_1", "status": "active" },
+  "evidence_set": { "evidence_set_id": "wellness_evidence_v0_1", "status": "active" },
+  "input_results": [
+    { "rsid": "rs671", "input_genotype": "AG", "normalized_genotype": "AG", "status": "matched", "matched_rule_id": "aldh2_rs671_alcohol_metabolism" },
+    { "rsid": "rs999999", "input_genotype": "AG", "status": "unsupported_marker", "reason": "No active v0.1 rule supports this marker." },
+    { "rsid": "rsABC", "input_genotype": "XZ", "status": "invalid_input", "reason": "Invalid rsID and genotype format." },
+    { "rsid": "rs762551", "input_genotype": "AA", "normalized_genotype": "AA", "status": "conflicted_input", "reason": "Same rsID provided with a differing genotype; excluded from matching." },
+    { "rsid": "rs762551", "input_genotype": "AC", "normalized_genotype": "AC", "status": "conflicted_input", "reason": "Same rsID provided with a differing genotype; excluded from matching." },
+    { "rsid": "rs4988235", "input_genotype": "AA", "normalized_genotype": "AA", "status": "duplicate_ignored", "reason": "Exact duplicate of an earlier input." }
+  ],
+  "results": [
+    {
+      "rule_id": "aldh2_rs671_alcohol_metabolism",
+      "domain": "wellness_trait",
+      "trait": "alcohol_metabolism",
+      "gene": "ALDH2",
+      "matched_markers": [ { "rsid": "rs671", "input_genotype": "AG", "normalized_genotype": "AG" } ],
+      "interpretation_level": "educational",
+      "result_code": "reduced_aldh2_activity_association",
+      "evidence_refs": ["evidence_aldh2_rs671_001"],
+      "source_refs": ["source_aldh2_rs671_paper_001"],
+      "safety_message": "This explanation is for educational purposes only and should not be used as medical, nutrition, fitness, supplement, or medication advice."
+    }
+  ],
+  "warnings": [
+    "rs4988235 AA was a duplicate and was ignored.",
+    "rs762551 had conflicting genotypes and was excluded from matching."
+  ]
+}
 ```
 
 ### 7.7 Safety Routing
@@ -431,6 +533,7 @@ Example:
   "request_id": "req-001",
   "api_version": "0.1",
   "status": "ok",
+  "interpretation_status": "matched",
   "module": "wellness_traits",
   "input_type": "synthetic",
   "rule_set": {
@@ -453,6 +556,9 @@ Example:
       "disease_risk_prediction"
     ]
   },
+  "input_results": [
+    { "rsid": "rs671", "input_genotype": "AG", "normalized_genotype": "AG", "status": "matched", "matched_rule_id": "aldh2_rs671_alcohol_metabolism" }
+  ],
   "results": [
     {
       "status": "matched",
@@ -484,7 +590,6 @@ Example:
       "safety_message": "This explanation is for educational purposes only and should not be used as medical, nutrition, fitness, supplement, or medication advice."
     }
   ],
-  "unsupported_inputs": [],
   "warnings": []
 }
 ```
@@ -506,6 +611,7 @@ Example:
   "request_id": "req-unsupported-001",
   "api_version": "0.1",
   "status": "ok",
+  "interpretation_status": "no_match",
   "module": "wellness_traits",
   "input_type": "synthetic",
   "safety": {
@@ -521,10 +627,11 @@ Example:
     ]
   },
   "results": [],
-  "unsupported_inputs": [
+  "input_results": [
     {
       "rsid": "rs999999",
-      "genotype": "AG",
+      "input_genotype": "AG",
+      "status": "unsupported_marker",
       "reason": "No active v0.1 curated rule supports this marker."
     }
   ],
@@ -545,6 +652,7 @@ Example:
   "request_id": "req-unmatched-001",
   "api_version": "0.1",
   "status": "ok",
+  "interpretation_status": "no_match",
   "module": "wellness_traits",
   "input_type": "synthetic",
   "safety": {
@@ -560,10 +668,11 @@ Example:
     ]
   },
   "results": [],
-  "unsupported_inputs": [
+  "input_results": [
     {
       "rsid": "rs671",
-      "genotype": "GG",
+      "input_genotype": "GG",
+      "status": "unmatched_genotype",
       "reason": "Marker is recognized, but this genotype does not match an active v0.1 interpretation rule."
     }
   ],
@@ -603,6 +712,7 @@ Example response:
   "request_id": "req-advice-001",
   "api_version": "0.1",
   "status": "ok",
+  "interpretation_status": "matched",
   "module": "wellness_traits",
   "input_type": "synthetic",
   "safety": {
@@ -617,6 +727,9 @@ Example response:
       "disease_risk_prediction"
     ]
   },
+  "input_results": [
+    { "rsid": "rs671", "input_genotype": "AG", "normalized_genotype": "AG", "status": "matched", "matched_rule_id": "aldh2_rs671_alcohol_metabolism" }
+  ],
   "results": [
     {
       "status": "matched",
@@ -648,7 +761,6 @@ Example response:
       "safety_message": "This explanation is for educational purposes only and should not be used as medical, nutrition, fitness, supplement, or medication advice."
     }
   ],
-  "unsupported_inputs": [],
   "warnings": [
     "The user asked for advice. The response was downgraded to educational explanation."
   ]
@@ -683,6 +795,7 @@ Example response:
   "request_id": "req-risk-001",
   "api_version": "0.1",
   "status": "ok",
+  "interpretation_status": "blocked_by_safety",
   "module": "wellness_traits",
   "input_type": "synthetic",
   "safety": {
@@ -706,9 +819,9 @@ Example response:
 }
 ```
 
-### 7.14 Invalid Request Response
+### 7.14 Invalid Input Handling
 
-Invalid rsID example:
+A top-level schema-fatal error (see 7.6) returns HTTP 400 with API `status` `error` and no genotype is processed. Example (invalid `input_type`):
 
 ```json
 {
@@ -716,37 +829,30 @@ Invalid rsID example:
   "api_version": "0.1",
   "status": "error",
   "error": {
-    "code": "invalid_request",
-    "message": "The request contains invalid input.",
-    "details": [
-      {
-        "field": "genotypes[0].rsid",
-        "code": "invalid_rsid_format",
-        "message": "Invalid rsID format. Expected pattern: rs followed by digits."
-      }
-    ]
+    "code": "invalid_input_type",
+    "message": "input_type is required and must be `synthetic`.",
+    "details": []
   }
 }
 ```
 
-Invalid genotype example:
+A single malformed genotype entry is not schema-fatal: the request is processed (HTTP 200, `status` `ok`) and the bad entry appears as `invalid_input` in `input_results[]`:
 
 ```json
 {
   "request_id": "req-invalid-002",
   "api_version": "0.1",
-  "status": "error",
-  "error": {
-    "code": "invalid_request",
-    "message": "The request contains invalid input.",
-    "details": [
-      {
-        "field": "genotypes[0].genotype",
-        "code": "invalid_genotype_format",
-        "message": "Invalid genotype format for v0.1 diploid marker input."
-      }
-    ]
-  }
+  "status": "ok",
+  "interpretation_status": "no_match",
+  "input_results": [
+    {
+      "rsid": "671",
+      "genotype": "ABC",
+      "status": "invalid_input",
+      "reason": "Invalid rsID format (expected rs followed by digits) and invalid genotype format."
+    }
+  ],
+  "warnings": ["One input was invalid and was not interpreted."]
 }
 ```
 
@@ -1021,21 +1127,22 @@ For v0.1 strict mode, degraded rule set loading should usually fail startup rath
 
 Recommended HTTP status codes:
 
-|  Code | Use                                                                                       |
-| ----: | ----------------------------------------------------------------------------------------- |
-| `200` | Successful request, including matched, unsupported, unmatched, or safe refusal responses. |
-| `400` | Invalid request format, invalid rsID, invalid genotype, unsupported module.               |
-| `404` | Active evidence ID not found.                                                             |
-| `422` | Request is syntactically valid but cannot be processed due to validation constraints.     |
-| `500` | Internal service error.                                                                   |
-| `503` | Service unavailable, rule set unavailable, evidence set unavailable.                      |
+|  Code | Use                                                                                                                   |
+| ----: | --------------------------------------------------------------------------------------------------------------------- |
+| `200` | Processed request, including matched, partial_success, no_match, and safe refusal, and per-input invalid/conflict/duplicate results. |
+| `400` | Top-level schema-fatal request: malformed JSON, missing required field, invalid input_type, invalid user_id, empty genotypes, unsupported module. |
+| `404` | Active evidence ID not found.                                                                                         |
+| `422` | Request is syntactically valid but cannot be processed due to validation constraints.                                 |
+| `500` | Internal service error.                                                                                               |
+| `503` | Service unavailable, rule set unavailable, evidence set unavailable.                                                  |
 
 Notes:
 
 ```text
-Unsupported marker is usually 200 with structured unsupported result.
-Invalid rsID format is 400.
-Advice refusal is usually 200 with safe refusal payload.
+Unsupported marker is 200 with a per-input unsupported_marker result.
+A single invalid rsID/genotype is 200 with a per-input invalid_input result; only top-level schema-fatal errors are 400.
+Duplicate and conflicting inputs are 200 with per-input duplicate_ignored / conflicted_input results.
+Advice refusal is 200 with a safe refusal payload.
 Missing active evidence record by ID is 404.
 Rule set unavailable is 503.
 ```

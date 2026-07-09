@@ -496,6 +496,8 @@ unsupported_marker
 unmatched_genotype
 insufficient_markers
 invalid_input
+conflicted_input
+duplicate_ignored
 blocked_by_safety
 rule_validation_error
 ```
@@ -517,6 +519,14 @@ A multi-marker rule may require additional markers that were not provided.
 
 invalid_input:
 The input marker or genotype failed validation.
+
+conflicted_input:
+The same rsID was provided more than once with differing normalized genotypes;
+the rsID is excluded from matching (see Multi-Input Semantics).
+
+duplicate_ignored:
+An exact duplicate of an earlier normalized input; ignored after the first (see
+Multi-Input Semantics).
 
 blocked_by_safety:
 The request was not eligible for rule matching due to safety route or blocked output.
@@ -597,6 +607,67 @@ Example unmatched genotype output:
   ],
   "warnings": [
     "No interpretation was generated."
+  ]
+}
+```
+
+## 17a. Multi-Input (Batch) Semantics
+
+`ValidatedInterpretationRequest` may carry multiple marker inputs. The engine processes them deterministically so the same batch always yields the same result.
+
+The result carries two arrays: `input_results[]` (one entry per input marker, with a per-input status) and `matches[]` (one entry per matched rule). A matched input references its rule via `matched_rule_id`; a multi-marker rule produces several matched `input_results` that map to a single `matches[]` entry.
+
+Processing rules:
+
+```text
+1. Every input marker appears exactly once in input_results[].
+2. Exact duplicate normalized inputs are deduplicated: the first is kept, later
+   identical inputs get status duplicate_ignored plus a warning.
+3. The same rsID with differing normalized genotypes is a conflict: all entries for
+   that rsID get status conflicted_input and the rsID is excluded from matching.
+4. An invalid marker/genotype is a per-input invalid_input; it does not abort the batch.
+5. Matching runs only on the remaining valid, non-duplicate, non-conflicted inputs.
+6. unsupported_marker, unmatched_genotype, insufficient_markers, invalid_input, and
+   conflicted_input are terminal for that input and must never be turned into an
+   interpretation by the LLM or any downstream layer.
+```
+
+Overall `interpretation_status` (ignoring duplicate_ignored entries):
+
+```text
+matched           - at least one input matched and all remaining inputs matched.
+partial_success   - at least one input matched and at least one did not.
+no_match          - no input matched.
+blocked_by_safety - the safety route refused the request; matching is not performed.
+```
+
+Example mixed result:
+
+```json
+{
+  "request_id": "req-010",
+  "interpretation_status": "partial_success",
+  "input_results": [
+    { "rsid": "rs671", "normalized_genotype": "AG", "status": "matched", "matched_rule_id": "aldh2_rs671_alcohol_metabolism" },
+    { "rsid": "rs999999", "normalized_genotype": "AG", "status": "unsupported_marker" },
+    { "rsid": "rsABC", "input_genotype": "XZ", "status": "invalid_input" },
+    { "rsid": "rs762551", "normalized_genotype": "AA", "status": "conflicted_input" },
+    { "rsid": "rs762551", "normalized_genotype": "AC", "status": "conflicted_input" },
+    { "rsid": "rs4988235", "normalized_genotype": "AA", "status": "duplicate_ignored" }
+  ],
+  "matches": [
+    {
+      "rule_id": "aldh2_rs671_alcohol_metabolism",
+      "trait": "alcohol_metabolism",
+      "matched_markers": [ { "rsid": "rs671", "normalized_genotype": "AG" } ],
+      "interpretation_level": "educational",
+      "result_code": "reduced_aldh2_activity_association",
+      "evidence_refs": ["evidence_aldh2_rs671_001"]
+    }
+  ],
+  "warnings": [
+    "rs4988235 AA was a duplicate and was ignored.",
+    "rs762551 had conflicting genotypes and was excluded from matching."
   ]
 }
 ```

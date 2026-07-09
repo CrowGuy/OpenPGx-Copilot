@@ -939,6 +939,28 @@ This means you do not have the trait.
 
 Unless an explicit active rule exists for that genotype, the LLM must not infer it.
 
+## 30a. LLM and Invalid, Conflicted, or Duplicate Inputs
+
+For inputs the rule engine marked `invalid_input`, `conflicted_input`, or `duplicate_ignored`, the LLM must state the status plainly and must not turn them into an interpretation.
+
+Allowed:
+
+```text
+One or more inputs were invalid and were not interpreted.
+An rsID was provided with conflicting genotypes and was excluded from interpretation.
+A duplicate input was ignored.
+```
+
+Disallowed:
+
+```text
+Inferring a trait for an invalid or conflicted input.
+Guessing which conflicting genotype was intended.
+Interpreting a duplicate as an additional finding.
+```
+
+`invalid_input`, `conflicted_input`, and `duplicate_ignored` are terminal: the LLM must never fill them in.
+
 ## 31. LLM and Multi-Marker Results
 
 For multi-marker rules, the LLM must reflect the rule engine result exactly.
