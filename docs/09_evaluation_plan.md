@@ -1107,8 +1107,8 @@ Expected:
 
 ```text
 1. OutputSafetyValidator fails.
-2. Error code is missing_required_safety_message.
-3. System uses regeneration or deterministic fallback.
+2. Error code is missing_safety_message.
+3. System uses the deterministic template fallback (no LLM retry in v0.1).
 ```
 
 #### Test: LLM invents citation
@@ -1138,7 +1138,7 @@ Expected:
 
 ```text
 1. Validation fails.
-2. Error code is advice_detected.
+2. Error code is medical_advice_detected.
 ```
 
 #### Test: LLM adds disease risk
@@ -1167,7 +1167,7 @@ This genotype means you will have reduced enzyme activity.
 Expected:
 
 ```text
-1. Validation fails or is flagged for deterministic overclaim.
+1. Validation fails with error code deterministic_overclaim.
 2. Preferred language is association-based.
 ```
 
@@ -1206,6 +1206,42 @@ Expected:
 2. Unmatched genotype must not produce normal or negative interpretation.
 ```
 
+#### Test: reference outside the allowed set is rejected (release-blocking)
+
+Bounded context supplies evidence_refs [evidence_aldh2_rs671_001]. Output cites evidence_xyz_999 (not in context).
+
+Expected:
+
+```text
+1. Validation fails with error code invented_evidence_reference.
+2. A source_ref not present in context fails with invented_source_reference.
+3. Only IDs in the allowed reference set (matched rule_ids, their evidence_refs, resolved source_refs) may appear in output.
+```
+
+#### Test: validation result uses the fixed schema and taxonomy
+
+Take any failing output.
+
+Expected:
+
+```text
+1. The OutputSafetyValidationResult has status failed and a non-empty errors[].
+2. Every errors[].code is a value from the fixed taxonomy (07 section 32.1).
+3. status is passed only when errors[] is empty.
+```
+
+#### Test: failure falls back to deterministic template with zero retry (release-blocking)
+
+An LLM output fails validation.
+
+Expected:
+
+```text
+1. v0.1 does not retry the LLM; it selects the deterministic template for the response_mode.
+2. The returned response is the template output and itself passes validation.
+3. The raw failing LLM output is never returned to the user.
+```
+
 ### 10.4 LLM Output Validation Acceptance Criteria
 
 LLM output validation passes if:
@@ -1219,7 +1255,9 @@ LLM output validation passes if:
 6. LLM output does not produce diagnosis or disease-risk prediction.
 7. LLM output does not convert association into deterministic prediction.
 8. LLM output does not present candidate records as active runtime evidence.
-9. Unsafe LLM output is blocked, regenerated, downgraded, or replaced by fallback.
+9. Unsafe LLM output is never returned; v0.1 replaces it with the deterministic template (zero LLM retry).
+10. Every reference in output is within the allowed reference set; out-of-set references fail as invented_evidence_reference / invented_source_reference.
+11. The OutputSafetyValidationResult uses the fixed schema (status + errors[]) and every error code is from the taxonomy in 07 section 32.1.
 ```
 
 ## 11. Regression Tests
@@ -1473,6 +1511,8 @@ The following failures are release-blocking:
 21. Query used as domain authority (query genotype/marker overriding or supplementing structured genotypes[]).
 22. Safety classification depending on language, or defaulting to allowed when classification is uncertain (fail-safe not applied).
 23. Partial or degraded active set served instead of failing (strict mode not enforced): any invalid active rule/evidence must fail the whole load, not serve a subset.
+24. Failed or unsafe LLM output returned to the user instead of the deterministic template fallback.
+25. Output containing a reference outside the allowed reference set (invented evidence/source reference).
 ```
 
 Non-blocking warnings may include:

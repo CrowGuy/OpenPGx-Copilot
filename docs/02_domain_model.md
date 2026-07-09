@@ -659,7 +659,9 @@ It must not introduce new domain claims.
 
 An `OutputSafetyValidationResult` records whether the final output passed safety checks.
 
-Example:
+`status` is `passed` when `errors` is empty, otherwise `failed`. Each check maps to a fixed error code; the full check-to-code taxonomy is defined in 07_llm_explanation_layer.md section 32.1.
+
+Passed example:
 
 ```yaml
 id: output_validation_req_001
@@ -668,6 +670,8 @@ status: passed
 checks:
   required_safety_message: passed
   evidence_refs_present: passed
+  evidence_refs_in_allowed_set: passed
+  source_refs_in_allowed_set: passed
   no_medical_advice: passed
   no_nutrition_advice: passed
   no_fitness_advice: passed
@@ -675,11 +679,32 @@ checks:
   no_medication_advice: passed
   no_diagnosis: passed
   no_disease_risk_prediction: passed
+  no_deterministic_overclaim: passed
   limitations_present: passed
   no_candidate_records_used: passed
+  safety_route_respected: passed
+errors: []
 ```
 
-If validation fails, the response must be regenerated, downgraded, or refused.
+Failed example:
+
+```yaml
+id: output_validation_req_014
+request_id: req-014
+status: failed
+checks:
+  no_disease_risk_prediction: failed
+  evidence_refs_in_allowed_set: failed
+errors:
+  - code: disease_risk_prediction_detected
+    field: body
+    message: "Output contained a disease-risk prediction."
+  - code: invented_evidence_reference
+    field: evidence_refs
+    message: "evidence_ref not present in the bounded context."
+```
+
+If validation fails, the response must not be returned; the system applies the fixed fallback order (deterministic template, then refusal) defined in 07_llm_explanation_layer.md section 32.4. v0.1 does not retry the LLM.
 
 ## 18. RuleSetRelease
 

@@ -336,13 +336,15 @@ The output safety validator should check for:
 11. Candidate-only records are not presented as active interpretation.
 ```
 
-If the output fails validation, the system must either:
+If the output fails validation, the system must not return the LLM output. v0.1 uses a fixed fallback order with no LLM retry:
 
 ```text
-1. Regenerate within stricter constraints.
-2. Downgrade to a safe educational template.
-3. Refuse the request.
+1. Use the deterministic safe template for the response mode.
+2. If no interpretation should be produced, use the refusal template.
+3. The returned output must itself pass validation.
 ```
+
+The concrete error codes, allowed reference set, result schema, and fallback policy are defined in 07_llm_explanation_layer.md section 32.
 
 ## 15. Runtime Safety Routes
 

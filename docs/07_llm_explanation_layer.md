@@ -1002,34 +1002,57 @@ The LLM must not provide partial interpretation unless the rule engine returned 
 
 ## 32. Output Safety Validator Integration
 
-The LLM output must be validated before user-facing return.
+The LLM output must be validated before user-facing return. This is the last safety gate, so its contract is fixed and implementable.
 
-The OutputSafetyValidator should check:
+### 32.1 Checks and Error Codes
 
-```text
-1. Required safety message exists.
-2. Evidence reference IDs are present.
-3. No medical advice.
-4. No nutrition advice.
-5. No fitness advice.
-6. No supplement advice.
-7. No medication advice.
-8. No diagnosis.
-9. No disease-risk prediction.
-10. No deterministic overclaim.
-11. No invented source references.
-12. No candidate records used as active evidence.
-13. Limitations are present.
-14. Safety route is respected.
-```
-
-If validation fails, the system must:
+Each check maps to one fixed error code. A failed check appends its code to the result's `errors[]`. Validators and tests must use these codes verbatim.
 
 ```text
-1. Regenerate with stricter prompt.
-2. Downgrade to a safe deterministic template.
-3. Refuse the request.
+required_safety_message_present -> missing_safety_message
+limitations_present             -> missing_limitations
+evidence_refs_present           -> missing_evidence_refs
+no_medical_advice               -> medical_advice_detected
+no_nutrition_advice             -> nutrition_advice_detected
+no_fitness_advice               -> fitness_advice_detected
+no_supplement_advice            -> supplement_advice_detected
+no_medication_advice            -> medication_advice_detected
+no_diagnosis                    -> diagnosis_detected
+no_disease_risk_prediction      -> disease_risk_prediction_detected
+no_deterministic_overclaim      -> deterministic_overclaim
+no_unsupported_trait_claim      -> unsupported_trait_claim
+evidence_refs_in_allowed_set    -> invented_evidence_reference
+source_refs_in_allowed_set      -> invented_source_reference
+no_candidate_records_used       -> candidate_record_used
+safety_route_respected          -> safety_route_violation
 ```
+
+### 32.2 Allowed Reference Set
+
+The allowed reference set for a response is exactly the IDs supplied in the bounded context: the matched `rule_id`s, their `evidence_refs`, and the `source_refs` of the resolved EvidenceRecords.
+
+```text
+1. Every rule_id, evidence_ref, and source_ref in the output must be a member of the allowed reference set.
+2. Any reference not in the set fails validation (invented_evidence_reference or invented_source_reference).
+3. The output must not introduce any new ID, citation, PMID, DOI, or URL that was not in the context.
+```
+
+### 32.3 Validation Result
+
+The validator returns an `OutputSafetyValidationResult` (schema in 02_domain_model.md section 17): a top-level `status` (`passed` | `failed`), a per-check status map, and an `errors[]` list where each entry has `code` (from 32.1), `field`, and `message`. `status` is `failed` if `errors[]` is non-empty.
+
+### 32.4 Fallback Policy (fixed order)
+
+If validation fails, the system must not return the LLM output. v0.1 does not retry the LLM:
+
+```text
+1. Select the deterministic template for the current response_mode
+   (matched / unsupported / downgraded / refusal; see section 33).
+2. If no interpretation should be produced, use the refusal template.
+3. Re-validate the template output; templates are constructed to always pass.
+```
+
+The response returned to the user must always pass validation. v0.1 uses zero LLM retries: a first validation failure goes straight to the deterministic template. (At most one stricter-prompt retry may be added in a later version; it is not part of v0.1.)
 
 ## 33. Deterministic Fallback Templates
 
