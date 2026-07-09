@@ -10,12 +10,21 @@ The architecture must support two related but separate paths:
 
 ```text
 1. Runtime interpretation path
-2. Offline ingestion / candidate compiler path
+2. Offline ingestion / certified compiler / release path
 ```
 
-The runtime path is responsible for safe, deterministic, user-facing educational interpretations based on active curated rules and active evidence records.
+The runtime path is responsible for safe, deterministic, user-facing educational interpretations based on the active RuntimeReleaseManifest (active curated rules and active evidence records).
 
-The offline ingestion/compiler path is responsible for creating source records, evidence candidates, rule candidates, and review cards from public structured or semi-structured sources. Its outputs are candidate-only by default and cannot directly produce user-facing interpretations.
+The offline ingestion/compiler path is responsible for producing generated rule and evidence candidates from trusted source snapshots via a certified compiler, then validating, diffing, reviewing exceptions, and approving them into a release. Its outputs cannot directly produce user-facing interpretations; only an approved RuntimeReleaseManifest can.
+
+OpenPGx reviews the system, release diffs, and exceptions; it does not require per-rule manual review for every generated record. The offline path is organized in three tiers:
+
+```text
+1. Untrusted / ad-hoc compiler output = reviewer-only candidate (never release-eligible).
+2. Certified compiler output from trusted sources = release-eligible generated records
+   (still must pass validation + diff classification + exception review + release approval).
+3. Active runtime output = only from an approved RuntimeReleaseManifest.
+```
 
 ## 2. Architectural Principles
 
@@ -26,7 +35,7 @@ OpenPGx Copilot follows these principles:
 2. Runtime user-facing interpretations are decided by active curated rules.
 3. Evidence lookup is rule-bound, not open-ended top-k retrieval.
 4. LLMs are explanation layers, not decision layers.
-5. Compiler output is candidate-only until reviewed, validated, approved, and released.
+5. Untrusted compiler output is reviewer-only; only certified compiler output from trusted sources is release-eligible, and only after validation, diff classification, exception review, and release approval into a RuntimeReleaseManifest.
 6. Every active rule must have valid evidence references.
 7. Every output must pass safety validation.
 8. v0.1 is wellness-first, but the architecture remains PGx-ready.
@@ -81,10 +90,10 @@ OpenPGx Copilot follows these principles:
                          └──────────────────────────┘
 ```
 
-Offline candidate compiler path:
+Offline ingestion / certified compiler / release path:
 
 ```text
-Public Sources
+TrustedSourceProfile (trusted source snapshot)
   ├─ GWAS Catalog
   ├─ dbSNP / NCBI Variation Services
   └─ PubMed metadata
@@ -99,27 +108,32 @@ Normalizers
 SourceRecords / MarkerRecords
         │
         ▼
-EvidenceCandidate Compiler
+CertifiedCompiler (CompilationRun)
         │
         ▼
-RuleCandidate Compiler
+Generated rule/evidence candidates
         │
         ▼
-ReviewCard Generator
+Validation (ValidationReport)
         │
         ▼
-Human Review + Validation
+Diff classification (DiffReport)
         │
         ▼
-Active EvidenceRecords + Active RuleRecords
+ExceptionReview (only where required)
         │
         ▼
-Released Active Rule Set
+ReleaseApproval
+        │
+        ▼
+Active RuntimeReleaseManifest
 ```
+
+Untrusted or ad-hoc compiler output stays a reviewer-only candidate and never enters this release-eligible path.
 
 ## 4. Runtime Architecture
 
-The runtime path must remain deterministic and bounded.
+The runtime path must remain deterministic and bounded, and serves only the active RuntimeReleaseManifest.
 
 Runtime flow:
 
@@ -139,7 +153,7 @@ Runtime must not perform open-ended literature retrieval to decide user-facing i
 
 Runtime must not use LLM reasoning to infer genotype-trait mapping.
 
-Runtime must not use candidate records as active rules.
+Runtime must not use candidate or generated records as active rules; it serves only records from an approved RuntimeReleaseManifest.
 
 ## 5. RawUserRequest
 
@@ -510,13 +524,15 @@ If validation fails, the system must:
 3. Refuse the request.
 ```
 
-## 14. Offline Ingestion / Compiler Architecture
+## 14. Offline Ingestion / Certified Compiler / Release Architecture
 
 The offline ingestion/compiler path is separate from runtime interpretation.
 
-Its purpose is to help build and review evidence and rule candidates.
+Its purpose is to generate rule and evidence candidates from trusted source snapshots and carry release-eligible generated records through validation, diff classification, exception review, and release approval into a RuntimeReleaseManifest.
 
-It may use public structured or semi-structured sources.
+OpenPGx reviews the system, release diffs, and exceptions; it does not require per-rule manual review for every generated record.
+
+It may use public structured or semi-structured sources, defined by a TrustedSourceProfile.
 
 Primary wellness sources:
 
@@ -535,26 +551,39 @@ Optional supporting sources:
 4. SNPedia as manual research aid only
 ```
 
-The compiler path is:
+The release-eligible compiler path is:
 
 ```text
-source adapter
+trusted source snapshot (TrustedSourceProfile)
+→ source adapter
 → source normalization
 → source record creation
 → marker record creation
-→ evidence candidate compilation
-→ rule candidate compilation
-→ review card generation
-→ human review
-→ validation
-→ active record release
+→ CertifiedCompiler (CompilationRun)
+→ generated rule/evidence candidates
+→ validation (ValidationReport)
+→ diff classification (DiffReport)
+→ exception review (ExceptionReview, only where required)
+→ release approval (ReleaseApproval)
+→ active RuntimeReleaseManifest
 ```
+
+Three tiers govern what a compiler run may become:
+
+```text
+1. Untrusted / ad-hoc compiler output = reviewer-only candidate (never release-eligible).
+2. CertifiedCompiler output from a TrustedSourceProfile = release-eligible generated records
+   (still must pass validation + diff classification + exception review + release approval).
+3. Active runtime output = only from an approved RuntimeReleaseManifest.
+```
+
+Failed validation produces no partial serving; the run does not advance and no records are activated.
 
 ## 15. Candidate Records
 
-Candidate records are not active records.
+Candidate records are not active records and are never served to users.
 
-Candidate records may be generated by deterministic compilers or reviewer tools.
+Candidate records may be generated by deterministic compilers or reviewer tools. Candidates from untrusted or ad-hoc compilers are reviewer-only and never release-eligible. Candidates from a CertifiedCompiler over a TrustedSourceProfile are release-eligible generated records, but still advance only through validation, diff classification, exception review, and release approval.
 
 Candidate record types include:
 
@@ -579,14 +608,16 @@ candidate_basis:
   - evidence_candidate_aldh2_rs671_gwas_001
 compiler_notes:
   - "Candidate generated from GWAS Catalog association and dbSNP marker validation."
-requires_human_review:
+exception_review_flags:
   - "Confirm genotype pattern."
   - "Confirm effect direction."
   - "Confirm population note."
   - "Confirm no disease-risk claim."
 ```
 
-Candidate records must not be used by runtime Rule Engine.
+The exception_review_flags carry checks that route this candidate to ExceptionReview when diff classification marks it as an exception; they do not imply manual review of every generated record.
+
+Candidate records must not be used by runtime Rule Engine, and must never be served to users.
 
 ## 16. Wellness Compiler Boundary
 
@@ -610,10 +641,12 @@ Therefore:
 
 ```text
 GWAS association
-→ EvidenceCandidate
-→ ReviewCard
-→ curated EvidenceRecord
-→ curated RuleRecord
+→ generated EvidenceCandidate (CertifiedCompiler)
+→ validation (ValidationReport)
+→ diff classification (DiffReport)
+→ exception review (ExceptionReview, only where required)
+→ release approval (ReleaseApproval)
+→ EvidenceRecord + RuleRecord in an active RuntimeReleaseManifest
 ```
 
 not:
@@ -663,7 +696,7 @@ Future PGx source strategy should prioritize expert-curated public pharmacogenom
 6. ClinVar as supporting variant metadata
 ```
 
-Original papers and literature retrieval may support evidence discovery and reviewer workflows but must not directly create active PGx rules without validation and human approval.
+Original papers and literature retrieval may support evidence discovery and reviewer workflows but must not directly create active PGx rules; release-eligible generated records still pass validation, diff classification, exception review, and release approval before entering an active RuntimeReleaseManifest.
 
 ## 18. Module Boundaries
 
@@ -777,41 +810,54 @@ openpgx-copilot/
 The system should version:
 
 ```text
-1. Source snapshots.
+1. Source snapshots (TrustedSourceProfile).
 2. SourceRecords.
 3. EvidenceRecords.
 4. RuleRecords.
 5. Candidate records.
-6. Active rule sets.
-7. Safety templates.
-8. Schema versions.
+6. Compiler certification (CertifiedCompiler) and CompilationRuns.
+7. RuntimeReleaseManifests (active rule sets).
+8. Safety templates.
+9. Schema versions.
 ```
 
-Example active rule set metadata:
+The active rule set is the RuntimeReleaseManifest; runtime serves only the approved manifest.
+
+Example RuntimeReleaseManifest metadata:
 
 ```yaml
 rule_set_id: wellness_rules_v0_1_2026_07
 status: active
 domain: wellness_trait
 created_at: "2026-07-07"
+trusted_source_profile: wellness_trusted_sources_v0_1
 source_snapshot_refs:
   - gwas_catalog_snapshot_2026_07
   - dbsnp_snapshot_2026_07
+certified_compiler_ref: certified_compiler_v0_1
+compilation_run_ref: run_2026_07_07_001
 evidence_record_version: "0.1"
 rule_record_version: "0.1"
+validation_report_ref: validation_2026_07_07_001
+diff_report_ref: diff_2026_07_07_001
+exception_review_ref: exceptions_2026_07_07_001
+release_approval_ref: approval_2026_07_07_001
 review_status: approved
 test_status: passed
 ```
 
-No active rule set should be released unless:
+No RuntimeReleaseManifest should be released unless:
 
 ```text
-1. All rules are schema-valid.
-2. All evidence_refs resolve.
-3. All referenced evidence records are active.
-4. Safety validation passes.
-5. Regression tests pass.
-6. Review status is approved.
+1. It was produced by a CertifiedCompiler from a TrustedSourceProfile.
+2. All rules are schema-valid.
+3. All evidence_refs resolve.
+4. All referenced evidence records are active.
+5. Safety validation passes (ValidationReport); failed validation blocks release with no partial serving.
+6. Regression tests pass.
+7. Diff classification (DiffReport) is complete.
+8. Every diff exception has an ExceptionReview.
+9. ReleaseApproval is granted.
 ```
 
 ## 21. Testing Architecture

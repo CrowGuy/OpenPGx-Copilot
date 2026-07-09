@@ -495,7 +495,7 @@ Evidence traceability passes if:
 
 ### 7.5 Release Manifest Tests
 
-These tests pin the atomic release bundle so a rule set and an evidence set can only be served as one reviewed/tested combination.
+These tests pin the atomic release bundle so a rule set and an evidence set can only be served as one validated, release-approved combination.
 
 #### Test: runtime loads only the manifest-pinned pair (release-blocking)
 
@@ -528,6 +528,179 @@ Expected:
 ```text
 1. Loading fails (strict); /health reports unavailable and /pgx/check returns 503.
 2. review_status/test_status must be approved/passed on the manifest and both sets, or load fails.
+```
+
+## 7a. Governance / Release Pipeline Tests
+
+### 7a.1 Governance Model
+
+Production governance replaces "human review of every generated rule" with a
+system-level model:
+
+```text
+trusted sources + certified compiler + strong validation + diff-based exception review + release approval.
+```
+
+Core sentence:
+
+```text
+OpenPGx reviews the system, release diffs, and exceptions; it does not require per-rule manual review for every generated record.
+```
+
+v0.1 is a hand-written bootstrap. These governance tests describe the v0.2+
+target and are stated here as the model. They do not change the v0.1 decisions:
+strict fail-closed loading, one bundle pinned per manifest, and zero-retry
+deterministic template fallback.
+
+Canonical vocabulary used below (exact names):
+
+```text
+TrustedSourceProfile
+CertifiedCompiler
+CompilationRun
+ValidationReport
+DiffReport
+ExceptionReview
+ReleaseApproval
+RuntimeReleaseManifest
+```
+
+### 7a.2 Compiler Certification Tests
+
+#### Test: uncertified compiler output cannot become active (release-blocking)
+
+Setup: a CompilationRun produced by a compiler whose CertifiedCompiler record
+is missing, revoked, or does not match the run's compiler identity/version.
+
+Expected:
+
+```text
+1. The output cannot be promoted into an active RuntimeReleaseManifest; it stays candidate-only.
+2. ReleaseApproval cannot be granted for a bundle built by an uncertified compiler.
+3. Error code is uncertified_compiler.
+```
+
+#### Test: certified compiler is required to match the run identity
+
+Setup: a CertifiedCompiler exists but its version does not match the
+CompilationRun's compiler version.
+
+Expected:
+
+```text
+1. The mismatch is treated as uncertified; output stays candidate.
+2. Load fails if such a bundle is pinned by a manifest.
+```
+
+### 7a.3 TrustedSourceProfile Tests
+
+#### Test: untrusted source output remains candidate-only (release-blocking)
+
+Setup: a CompilationRun whose input source snapshot is not covered by any active
+TrustedSourceProfile.
+
+Expected:
+
+```text
+1. Generated records remain candidate; they cannot enter an active manifest.
+2. ReleaseApproval cannot be granted for output derived from an untrusted source.
+3. Error code is untrusted_source.
+```
+
+#### Test: trusted source snapshot is required for active records
+
+Setup: a bundle whose source_snapshot_refs resolve to a source in the active
+TrustedSourceProfile set.
+
+Expected:
+
+```text
+1. The bundle is eligible for validation and release (subject to the other gates).
+2. Output from a source not in the trusted set stays candidate.
+```
+
+### 7a.4 Validation and Diff Tests
+
+#### Test: unchanged generated rules pass without per-rule review when validation passes
+
+Setup: a new CompilationRun whose DiffReport shows no changed records versus the
+active manifest, and whose ValidationReport passes.
+
+Expected:
+
+```text
+1. Unchanged, validation-passing generated records do NOT require per-rule manual review.
+2. The bundle can proceed to ReleaseApproval on the strength of the ValidationReport and DiffReport.
+3. No per-record human sign-off is recorded or required for unchanged records.
+```
+
+#### Test: diff exceptions require an ExceptionReview before release (release-blocking)
+
+Setup: a DiffReport that classifies one or more records as changed/exception
+(added, removed, or materially changed).
+
+Expected:
+
+```text
+1. Release is blocked until every diff exception has an ExceptionReview.
+2. An unreviewed exception blocks ReleaseApproval.
+3. Error code is unreviewed_diff_exception.
+```
+
+#### Test: compiler version / source snapshot drift triggers a diff and blocks release until classified (release-blocking)
+
+Setup: a new CompilationRun where the CertifiedCompiler version or the trusted
+source snapshot differs from the active manifest, but generated record content is
+otherwise similar.
+
+Expected:
+
+```text
+1. The drift is surfaced as a DiffReport entry, not silently accepted.
+2. Release is blocked until the drift is classified via ExceptionReview.
+3. Error code is unclassified_drift.
+```
+
+### 7a.5 Release Approval and Provenance Tests
+
+#### Test: release approval approves the manifest bundle, not individual rules
+
+Setup: a candidate RuntimeReleaseManifest bundle with a passing ValidationReport
+and a fully reviewed DiffReport.
+
+Expected:
+
+```text
+1. ReleaseApproval applies to the whole manifest bundle (rule set + evidence set + pinned snapshot + compilation run).
+2. There is no per-rule approval object; approval is recorded once against the manifest.
+3. Activating the approved manifest is atomic; individual records cannot be approved or activated on their own.
+```
+
+#### Test: RuntimeReleaseManifest provenance traces to trusted snapshot + certified run + validation + approval (release-blocking)
+
+Setup: an active RuntimeReleaseManifest.
+
+Expected:
+
+```text
+1. Every active record traces to a TrustedSourceProfile-covered source snapshot.
+2. Every active record traces to a CertifiedCompiler CompilationRun.
+3. The manifest references a passing ValidationReport and a fully reviewed DiffReport.
+4. The manifest carries exactly one ReleaseApproval.
+5. If any link is missing, the manifest is not active and the service does not serve (strict fail-closed).
+```
+
+### 7a.6 Governance Acceptance Criteria
+
+Governance / release pipeline tests pass if:
+
+```text
+1. Every active runtime record traces to a trusted source snapshot, a certified compiler CompilationRun, a passing ValidationReport, and a ReleaseApproval.
+2. Uncertified compiler output and untrusted source output never become active; they stay candidate-only.
+3. Unchanged, validation-passing generated records do not require per-rule review.
+4. Every diff exception has an ExceptionReview before release.
+5. Compiler-version or source-snapshot drift produces a DiffReport entry and blocks release until classified.
+6. ReleaseApproval is recorded against the manifest bundle, not individual rules, and activation is atomic.
 ```
 
 ## 8. Safety Tests
@@ -1061,7 +1234,7 @@ Input: an input that could map to multiple traits.
 Expected:
 
 ```text
-1. One result is returned unless an explicitly reviewed multi-trait mapping exists.
+1. One result is returned unless a multi-trait mapping exists in the released, validated bundle.
 2. The LLM does not add extra trait interpretations beyond matches[].
 ```
 
@@ -1552,7 +1725,18 @@ The following failures are release-blocking:
 24. Failed or unsafe LLM output returned to the user instead of the deterministic template fallback.
 25. Output containing a reference outside the allowed reference set (invented evidence/source reference).
 26. Runtime serving a rule_set/evidence_set combination not pinned by an active RuntimeReleaseManifest, or a combination whose schema/normalization/snapshot versions disagree.
+27. Uncertified compiler output (no matching CertifiedCompiler for the CompilationRun) becoming active.
+28. Untrusted source output (no covering TrustedSourceProfile) becoming active instead of staying candidate.
+29. A diff exception (added/removed/changed record in the DiffReport) released without an ExceptionReview.
+30. Compiler-version or source-snapshot drift released without being surfaced as a DiffReport entry and classified.
+31. ReleaseApproval recorded against individual rules instead of the manifest bundle, or a record activated outside an approved manifest.
+32. An active RuntimeReleaseManifest whose records do not trace to a trusted source snapshot, a certified CompilationRun, a passing ValidationReport, and a ReleaseApproval.
 ```
+
+Note: v0.1 is a hand-written bootstrap; items 27-32 describe the v0.2+ governance
+model (trusted sources + certified compiler + validation + diff-based exception
+review + release approval). OpenPGx reviews the system, release diffs, and
+exceptions; it does not require per-rule manual review for every generated record.
 
 Non-blocking warnings may include:
 
@@ -1631,6 +1815,7 @@ Before releasing v0.1, the following must pass:
 7. API integration tests for the four v0.1 endpoints.
 8. Multi-input (batch) tests: mixed partial_success, dedup, conflict, per-input invalid, and top-level schema-fatal.
 9. Release manifest tests: manifest-pinned pair only, cross-set reference rejected, version-mismatch fails load.
+10. Governance / release pipeline tests (v0.2+ target, run against the model): certified compiler required, untrusted source stays candidate, unchanged validation-passing records need no per-rule review, diff exceptions reviewed, release approval at the manifest bundle, and manifest provenance traceable to trusted snapshot + certified run + validation + approval.
 ```
 
 The release-blocking trait bar is MVP-min: ALDH2 (rs671) must work end to end as one active rule. Additional traits are MVP-full targets; their tests are run but do not block release. The candidate-only compiler prototype is non-release-blocking for v0.1.
@@ -1649,6 +1834,7 @@ Release must be blocked if:
 9. Free-text is persisted, logged in cleartext, or used as domain interpretation input.
 10. A single invalid/unsupported/conflicted entry fails the whole batch, or conflicted/invalid/duplicate input is interpreted, or interpretation_status is not a deterministic function of the per-input results.
 11. A partial or degraded active set is served instead of failing under strict mode.
+12. (v0.2+ governance model) An active manifest is served whose records do not trace to a trusted source snapshot, a certified CompilationRun, a passing ValidationReport, and a ReleaseApproval; or an uncertified/untrusted bundle is activated; or a diff exception or compiler/snapshot drift is released without ExceptionReview.
 ```
 
 ## 18. Future PGx Evaluation Extension
@@ -1690,4 +1876,5 @@ The v0.1 evaluation plan is acceptable if:
 9. It verifies evidence_refs for every matched interpretation.
 10. It verifies safety message and limitations in every matched output.
 11. It supports future extension to PGx evaluation.
+12. It requires (v0.2+ governance model) that every active runtime record trace to a trusted source snapshot, a certified compiler run, a passing ValidationReport, and a ReleaseApproval; that diff exceptions be reviewed; and that unchanged, validation-passing generated records not require per-rule review.
 ```

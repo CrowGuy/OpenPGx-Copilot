@@ -106,8 +106,10 @@ OpenPGx Copilot v0.1 must not:
 18. Invent evidence references, source versions, effect sizes, population claims, or clinical claims.
 19. Process real patient data in v0.1.
 20. Answer open-ended medical questions outside supported educational trait interpretation scope.
-21. Activate compiler-generated candidate rules without human review and validation.
+21. Activate uncertified or untrusted compiler output.
 22. Use literature extraction as a direct active-rule creation mechanism.
+23. Activate any rule or evidence record that lacks certified-compiler and trusted-source provenance.
+24. Release an active bundle while any diff exception (DiffReport entry) remains unresolved by an ExceptionReview.
 ```
 
 ## 7. Advice Categories That Must Be Blocked
@@ -221,13 +223,17 @@ Only curated active rules may produce user-facing interpretations.
 Active rules must be:
 
 ```text
-1. Manually curated or explicitly approved.
+1. Backed by trusted-source provenance (TrustedSourceProfile) and certified-compiler provenance (CertifiedCompiler / CompilationRun), or hand-authored under the v0.1 bootstrap and held to the same validation and release approval.
 2. Schema-valid.
 3. Linked to valid evidence records.
 4. Assigned an interpretation_level.
 5. Assigned required safety messages.
-6. Covered by regression tests.
+6. Covered by passing safety validation (ValidationReport).
+7. Included in an approved release manifest (RuntimeReleaseManifest with ReleaseApproval).
+8. Covered by regression tests.
 ```
+
+OpenPGx reviews the system, release diffs, and exceptions; it does not require per-rule manual review for every generated record. Per-record human review is required only for diff exceptions (DiffReport -> ExceptionReview), which must be resolved before release.
 
 The system must not allow:
 
@@ -255,17 +261,19 @@ ReviewCard
 DiffReport
 ```
 
-Compiler outputs must not be used as active runtime interpretation logic unless they pass:
+Uncertified or untrusted compiler output can never be directly activated. Compiler outputs must not be used as active runtime interpretation logic unless they pass:
 
 ```text
 1. Schema validation.
-2. Source reference validation.
-3. Evidence reference validation.
-4. Safety validation.
-5. Human review.
-6. Approval.
-7. Regression testing.
-8. Active rule set release.
+2. Trusted-source provenance (TrustedSourceProfile).
+3. Certified-compiler provenance (CertifiedCompiler / CompilationRun).
+4. Source reference validation.
+5. Evidence reference validation.
+6. Safety validation (ValidationReport).
+7. Diff review with all exceptions resolved (DiffReport -> ExceptionReview).
+8. Release approval (ReleaseApproval).
+9. Regression testing.
+10. Active rule set release pinned by an approved RuntimeReleaseManifest.
 ```
 
 The compiler must not:
@@ -441,5 +449,6 @@ v0.1 satisfies the safety boundary if:
 10. Rules without valid evidence references cannot be loaded as active rules.
 11. Output safety validation is part of the runtime path.
 12. The system remains educational-only in v0.1.
-13. Compiler-generated candidate records cannot be used as active rules without review and approval.
+13. Compiler-generated records enter an active release only with certified-compiler and trusted-source provenance, passing validation, and an approved release manifest; uncertified or untrusted compiler output is never activated.
+14. No active release is cut while any diff exception remains unresolved.
 ```

@@ -24,10 +24,10 @@ The roadmap follows these principles:
 2. Validate architecture before expanding scope.
 3. Keep runtime interpretation rule-bound and evidence-linked.
 4. Use LLMs only for explanation, not decisions.
-5. Keep compiler output candidate-only until reviewed and approved.
+5. Keep untrusted or uncertified compiler output candidate-only; govern the system, release diffs, and exceptions rather than manually reviewing every generated record.
 6. Avoid medical, nutrition, fitness, supplement, medication, diagnosis, or disease-risk advice in v0.1.
-7. Add PGx support gradually through curated, structured sources.
-8. Prefer expert-curated PGx resources over direct paper-to-rule extraction.
+7. Add PGx support gradually through TrustedSourceProfile-governed structured sources.
+8. Prefer trusted, certified compilation from expert-curated PGx resources over direct paper-to-rule extraction.
 9. Preserve auditability and regression testing at every stage.
 10. Do not process real patient data until explicit governance, privacy, and clinical review requirements are defined.
 ```
@@ -36,7 +36,7 @@ The roadmap follows these principles:
 
 ```text id="6nt0bb"
 v0.1 - Wellness-first educational POC
-v0.2 - Ingestion Lite and reviewer workflow
+v0.2 - Certified compiler and exception review workflow
 v0.3 - PGx reference-path prototype
 v0.4 - OpenPGx-native PGx rule engine prototype
 v0.5 - Evidence viewer and hybrid review retrieval
@@ -173,25 +173,27 @@ ADR-002-rule-bound-evidence-retrieval.md
 ADR-003-candidate-only-compiler-output.md
 ```
 
-## 5. v0.2 — Ingestion Lite and Reviewer Workflow
+## 5. v0.2 — Certified Compiler and Exception Review Workflow
 
 ### 5.1 Version Goal
 
-v0.2 strengthens the offline ingestion and review path.
+v0.2 establishes the certified compilation and release-governance path.
 
-The goal is to move beyond fully hand-written evidence/rule YAML while preserving the rule that compiler output is candidate-only by default.
+The goal is to move beyond fully hand-written evidence/rule YAML by making a CertifiedCompiler the source of active records, governed at the release level: OpenPGx reviews the system, release diffs, and exceptions; it does not require per-rule manual review for every generated record.
+
+The core governance model is trusted sources plus a certified compiler plus strong validation plus diff-based exception review plus release approval, replacing per-rule human review of every generated record.
 
 v0.2 focuses on:
 
 ```text id="bng4ha"
-public structured sources
-→ source adapters
-→ normalized records
-→ EvidenceCandidateRecords
-→ RuleCandidateRecords
-→ ReviewCards
-→ human review
-→ active records
+TrustedSourceProfile sources
+→ CertifiedCompiler
+→ CompilationRun
+→ ValidationReport
+→ DiffReport
+→ ExceptionReview
+→ ReleaseApproval
+→ RuntimeReleaseManifest
 ```
 
 ### 5.2 Scope
@@ -199,24 +201,24 @@ public structured sources
 v0.2 includes:
 
 ```text id="2c4njt"
-1. GWAS Catalog adapter.
-2. dbSNP / NCBI Variation Services adapter.
-3. PubMed metadata adapter.
-4. SourceSnapshot support.
-5. MarkerRecord generation.
-6. EvidenceCandidateRecord generation.
-7. RuleCandidateRecord generation.
-8. EvidenceReviewCard generation.
-9. Candidate-to-active manual review workflow.
-10. Source cache.
-11. Source hash / manifest support.
-12. Candidate/active separation tests.
+1. TrustedSourceProfile set and governance.
+2. CertifiedCompiler and certification suite.
+3. CompilationRun with reproducible provenance.
+4. GWAS Catalog / dbSNP / PubMed source adapters under TrustedSourceProfile.
+5. SourceSnapshot support.
+6. MarkerRecord generation.
+7. ValidationReport generation (strong validation).
+8. DiffReport generation against the prior release.
+9. ExceptionReview workflow for flagged diffs.
+10. ReleaseApproval at the manifest/diff level (not per rule).
+11. RuntimeReleaseManifest assembly.
+12. Certified/trusted vs candidate separation tests.
 ```
 
 ### 5.3 Key Design Rule
 
 ```text id="4rz064"
-Compiler output remains candidate-only.
+Untrusted or uncertified compiler output remains candidate-only.
 ```
 
 v0.2 must not allow:
@@ -226,16 +228,18 @@ GWAS association
 → active rule
 ```
 
-without human review and validation.
+without trusted-source provenance, a certified compilation, passing validation, and a release approval covering the diff.
 
 Correct flow:
 
 ```text id="hgjqnw"
-GWAS association
-→ EvidenceCandidateRecord
-→ ReviewCard
-→ curated EvidenceRecord
-→ curated RuleRecord
+TrustedSourceProfile source
+→ CertifiedCompiler CompilationRun
+→ ValidationReport
+→ DiffReport
+→ ExceptionReview (for flagged diffs)
+→ ReleaseApproval
+→ RuntimeReleaseManifest
 ```
 
 ### 5.4 Out of Scope
@@ -243,7 +247,7 @@ GWAS association
 v0.2 does not include:
 
 ```text id="1m6o9m"
-1. Automatic active rule creation.
+1. Activation of uncertified or untrusted compiler output.
 2. Automatic paper-to-rule extraction.
 3. LLM-assigned evidence strength.
 4. Large-scale SNP ingestion.
@@ -256,14 +260,16 @@ v0.2 does not include:
 v0.2 is complete when:
 
 ```text id="bf0brh"
-1. Source adapters generate valid SourceRecords.
-2. Source snapshots are versioned.
-3. Evidence candidates are generated from public structured sources.
-4. Review cards are generated from evidence candidates.
-5. Candidate records cannot enter runtime.
-6. Candidate-to-active workflow is documented and testable.
-7. Source traceability is preserved.
-8. v0.1 runtime behavior remains unchanged.
+1. TrustedSourceProfile governs which sources may feed the compiler.
+2. CertifiedCompiler passes its certification suite; CompilationRuns are reproducible.
+3. Source snapshots are versioned.
+4. Active records are produced only from certified compilation over trusted sources.
+5. ValidationReport is generated per CompilationRun; failed validation blocks any serving (no partial serving).
+6. DiffReport is generated against the prior release, and safety-sensitive diffs require ExceptionReview.
+7. ReleaseApproval is recorded at the manifest/diff level and gates the RuntimeReleaseManifest.
+8. Uncertified or untrusted output cannot enter the RuntimeReleaseManifest.
+9. Source traceability and compiler provenance are preserved.
+10. v0.1 runtime behavior remains unchanged.
 ```
 
 ## 6. v0.3 — PGx Reference-path Prototype
@@ -618,7 +624,7 @@ v0.8 may include:
 v0.8 is complete when:
 
 ```text id="ztx22t"
-1. Every active rule has review and approval metadata.
+1. Every active release has trusted-source provenance, certified-compiler provenance, validation reports, a diff report, resolved exception reviews, and a release approval.
 2. Every active evidence record has source traceability.
 3. Every release has an audit manifest.
 4. Safety tests block unsafe output.
@@ -789,9 +795,11 @@ Key risks:
 5. Source version drift.
 6. Rule/evidence mismatch.
 7. Complex PGx genes requiring unsupported calling logic.
-8. Lack of domain expert review.
-9. Public source licensing constraints.
-10. Real patient data governance gaps.
+8. Weak source trust (untrusted or misgoverned sources feeding the compiler).
+9. Weak compiler certification (an uncertified or under-tested compiler producing active records).
+10. Missed diff exception (a safety-sensitive release diff activated without exception review).
+11. Public source licensing constraints.
+12. Real patient data governance gaps.
 ```
 
 Mitigations:
@@ -804,7 +812,9 @@ Mitigations:
 5. Use safety validator on every output.
 6. Prefer expert-curated PGx sources.
 7. Use PharmCAT as reference path before native PGx engine.
-8. Add human review gates.
-9. Version source snapshots.
-10. Do not process real patient data until governance exists.
+8. Govern trusted sources through TrustedSourceProfile.
+9. Certify the compiler through a compiler certification suite.
+10. Require mandatory ExceptionReview for safety-sensitive diffs, gated by ReleaseApproval.
+11. Version source snapshots.
+12. Do not process real patient data until governance exists.
 ```

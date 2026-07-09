@@ -383,8 +383,19 @@ v0.1 does not implement:
 Core ingestion principle:
 
 ```text
-No ingestion output can become an active rule without curation and validation.
+Untrusted or uncertified compiler output remains candidate-only.
+Certified compiler output from trusted source snapshots may become
+release-eligible only after validation, diff classification,
+exception review where required, and release approval.
 ```
+
+Governance model:
+
+In v0.1, the compiler is optional and non-release-blocking, and v0.1 may ship with hand-written active rule/evidence YAML as a bootstrap MVP.
+
+For v0.2 and later, the system does not manually review each generated rule. It reviews source trust (TrustedSourceProfile), compiler certification (CertifiedCompiler), each CompilationRun, the validation suite (ValidationReport), diff exceptions (DiffReport, ExceptionReview), and the release manifest (ReleaseApproval, RuntimeReleaseManifest).
+
+OpenPGx reviews the system, release diffs, and exceptions; it does not require per-rule manual review for every generated record.
 
 ## 14. v0.1 Retrieval Scope
 

@@ -270,9 +270,19 @@ The compiler must not directly generate active user-facing rules.
 The core rule is:
 
 ```text
-Compiler output = candidate by default.
-Human-reviewed and safety-validated output = active.
+Untrusted or uncertified compiler output remains candidate-only.
+Certified compiler output from trusted source snapshots may become
+release-eligible only after validation, diff classification,
+exception review where required, and release approval.
 ```
+
+Governance model:
+
+v0.1 may ship hand-written active YAML as a bootstrap MVP; the compiler is optional and non-release-blocking in v0.1.
+
+For v0.2 and later, long-term production is not per-rule manual review of every generated record. The system instead reviews source trust (TrustedSourceProfile), compiler certification (CertifiedCompiler), each CompilationRun, the validation suite (ValidationReport), diff exceptions (DiffReport, ExceptionReview), and the release manifest (ReleaseApproval, RuntimeReleaseManifest).
+
+OpenPGx reviews the system, release diffs, and exceptions; it does not require per-rule manual review for every generated record.
 
 ## 14. LLM Role
 
