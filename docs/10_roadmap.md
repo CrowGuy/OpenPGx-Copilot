@@ -81,7 +81,7 @@ v0.1 includes:
 8. LLM explanation layer boundary.
 9. Output safety validator.
 10. Minimal API.
-11. Candidate-only compiler framework prototype.
+11. Candidate-only compiler framework prototype (optional, non-release-blocking; full implementation in v0.2).
 12. Evaluation plan and regression tests.
 ```
 
@@ -134,7 +134,7 @@ v0.1 does not include:
 v0.1 is complete when:
 
 ```text id="7ioyl7"
-1. Supported rsID-genotype inputs match expected active rules.
+1. MVP-min is met: ALDH2 (rs671) works end to end as one active rule; any other trait that ships matches its expected active rule. The full five-trait set is an MVP-full target, not a release blocker.
 2. Unsupported inputs do not produce invented interpretations.
 3. Every matched result includes evidence_refs.
 4. Every evidence_ref resolves to active EvidenceRecord.
@@ -145,6 +145,8 @@ v0.1 is complete when:
 9. Evaluation plan tests pass.
 10. Documentation baseline is complete.
 ```
+
+The compiler framework prototype is non-release-blocking; v0.1 may ship with hand-written rule/evidence YAML only, and full compiler delivery is a v0.2 exit criterion.
 
 Required docs:
 

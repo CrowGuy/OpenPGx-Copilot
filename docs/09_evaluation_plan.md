@@ -1393,6 +1393,8 @@ Before releasing v0.1, the following must pass:
 7. API integration tests for the four v0.1 endpoints.
 ```
 
+The release-blocking trait bar is MVP-min: ALDH2 (rs671) must work end to end as one active rule. Additional traits are MVP-full targets; their tests are run but do not block release. The candidate-only compiler prototype is non-release-blocking for v0.1.
+
 Release must be blocked if:
 
 ```text

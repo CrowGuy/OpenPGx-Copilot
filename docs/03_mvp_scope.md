@@ -14,7 +14,7 @@ OpenPGx Copilot v0.1 is a wellness-first educational proof of concept.
 
 It accepts synthetic rsID-genotype inputs, matches them against a small curated wellness trait rule set, resolves rule-bound evidence references, and produces safe educational explanations with limitations and safety messages.
 
-v0.1 may also include a candidate-only evidence/rule compiler framework for wellness traits. This compiler framework may generate candidate records from public structured or semi-structured sources, but it must not directly generate active user-facing rules.
+v0.1 may also include a candidate-only evidence/rule compiler framework for wellness traits. This compiler framework is optional and non-release-blocking for v0.1; its full implementation is deferred to v0.2, and v0.1 may ship with hand-written rule/evidence YAML only. When present, it may generate candidate records from public structured or semi-structured sources, but it must not directly generate active user-facing rules.
 
 v0.1 does not provide medical, nutrition, fitness, supplement, medication, diagnosis, disease-risk, treatment, or lifestyle advice.
 
@@ -165,6 +165,22 @@ Initial supported trait candidates:
 ```
 
 These traits are selected because they are useful for validating the architecture and can be explained as educational associations without making personal health recommendations.
+
+### MVP Release Profile
+
+v0.1 defines two profiles so completion is unambiguous:
+
+```text
+MVP-min (release-blocking):
+- ALDH2 (rs671) delivered as one schema-valid active rule, working end to end
+  (input -> rule match -> evidence -> explanation -> safety validation).
+- Unsupported, deferred, invalid-input, and safety tests pass.
+
+MVP-full (target, non-release-blocking):
+- All five traits above delivered as active rules.
+```
+
+The remaining four traits are targets: they may ship in v0.1, but their absence does not block the v0.1 release. Any trait that does ship must meet the same active-rule, evidence, and safety requirements as ALDH2.
 
 ## 8. v0.1 Deferred Trait Set
 
@@ -503,7 +519,7 @@ The following are out of scope:
 v0.1 is accepted if:
 
 ```text
-1. A supported rsID-genotype input triggers the correct curated wellness trait rule.
+1. The MVP-min bar is met: ALDH2 (rs671) works end to end as one active rule (see the MVP Release Profile in section 7). Any additional supported trait that ships also triggers its correct curated rule.
 2. Unsupported rsID does not produce invented interpretation.
 3. Invalid genotype format returns validation error or unsupported warning.
 4. Every interpretation links to at least one evidence reference.
