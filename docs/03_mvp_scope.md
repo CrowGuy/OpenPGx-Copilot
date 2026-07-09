@@ -121,6 +121,8 @@ v0.1 may also support a lightweight natural-language query field:
 
 The natural-language query may be used for intent routing, response mode selection, and safety classification. It must not be used as domain interpretation logic.
 
+Structured `genotypes[]` is the sole domain authority. The query is never parsed for markers or genotypes; any rsID or genotype text written inside the query is ignored for interpretation. Because the query is never a source of markers, there is no query-versus-payload genotype conflict to resolve. The query affects only the safety route, the response mode, and the output wording.
+
 ## 6. v0.1 Input Constraints
 
 v0.1 inputs must be constrained to:

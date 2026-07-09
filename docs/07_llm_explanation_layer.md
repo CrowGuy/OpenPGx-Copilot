@@ -961,6 +961,27 @@ Interpreting a duplicate as an additional finding.
 
 `invalid_input`, `conflicted_input`, and `duplicate_ignored` are terminal: the LLM must never fill them in.
 
+## 30b. LLM and the User Query
+
+The user query informs only tone, response mode, and language. The LLM must not treat it as domain input.
+
+Disallowed:
+
+```text
+Extracting markers, genotypes, or traits from the query.
+Answering the query as an open medical or genetics question.
+Preferring a genotype mentioned in the query over the structured genotypes[].
+```
+
+Allowed:
+
+```text
+Adjusting wording, language, and response mode to fit the query.
+Following the assigned safety route when the query requests a blocked output.
+```
+
+Structured `genotypes[]` is the sole domain authority. If the query is ambiguous or its intent is unclear, the LLM must follow the fail-safe route (downgrade or refuse), never invent an interpretation.
+
 ## 31. LLM and Multi-Marker Results
 
 For multi-marker rules, the LLM must reflect the rule engine result exactly.

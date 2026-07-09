@@ -317,7 +317,7 @@ Chinese example:
 | `user_id`       | string |          no | Synthetic user identifier. If provided, must match `^(demo\|synthetic)-[A-Za-z0-9]{1,64}$`; else 400 `invalid_user_id`. Never persisted or logged in cleartext. |
 | `input_type`    | string |         yes | Must be `synthetic`. Rejected with 400 `invalid_input_type` if missing or any other value. |
 | `module`        | string |         yes | v0.1 supports `wellness_traits`.                                                   |
-| `query`         | string |          no | Optional simple user query for response mode and safety routing. Not domain logic. Never persisted or logged in cleartext. |
+| `query`         | string |          no | Optional user query for response mode and safety routing only. Never parsed for markers/genotypes; `genotypes[]` is the sole domain authority. Not domain logic. Never persisted or logged in cleartext. |
 | `genotypes`     |  array |         yes | List of rsID-genotype inputs.                                                      |
 | `response_mode` | string |          no | Defaults to `educational_explanation`.                                             |
 | `language`      | string |          no | Suggested output language. Examples: `en`, `zh-TW`.                                |
@@ -523,6 +523,30 @@ downgrade_to_educational
 ```
 
 Refusal routes must not produce advice.
+
+### 7.7a Query Precedence and Language
+
+The `query` is the easiest way to push the system toward chatbot or medical-advice behavior, so its influence is strictly bounded.
+
+```text
+1. Structured genotypes[] is the sole domain authority.
+2. The query is never parsed for markers or genotypes; rsID/genotype text in the
+   query is ignored for interpretation.
+3. There is no query-versus-payload genotype conflict to resolve: the query can
+   never be a source of markers, so no conflict or reconciliation logic exists.
+4. The query affects only: safety route, response_mode, and output wording/language.
+5. The query is never used for rule matching, evidence selection, or result_code.
+```
+
+Safety classification must not depend on the query language:
+
+```text
+1. A request that must be blocked in one supported language must be blocked the same
+   way in every supported language (v0.1: en and zh-TW).
+2. Fail-safe default: if the safety route is uncertain, the query is ambiguous, or
+   the language is unsupported/undetected, the service must choose a safe route
+   (downgrade_to_educational or a refuse_* route), never allowed.
+```
 
 ### 7.8 Successful Matched Response
 
