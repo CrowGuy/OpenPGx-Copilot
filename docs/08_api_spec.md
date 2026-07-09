@@ -1100,6 +1100,7 @@ GET /health
   "api_version": "0.1",
   "service": "openpgx-copilot",
   "environment": "local",
+  "release_id": "wellness_release_v0_1_2026_07",
   "rule_set": {
     "rule_set_id": "wellness_rules_v0_1_2026_07",
     "status": "active",
@@ -1128,6 +1129,7 @@ v0.1 uses strict loading: if any active rule or evidence record fails validation
   "api_version": "0.1",
   "service": "openpgx-copilot",
   "environment": "local",
+  "release_id": "wellness_release_v0_1_2026_07",
   "rule_set": {
     "rule_set_id": "wellness_rules_v0_1_2026_07",
     "status": "unavailable",

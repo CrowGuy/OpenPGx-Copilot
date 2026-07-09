@@ -741,6 +741,45 @@ A `RuleSetRelease` must not be active unless:
 6. Review status is approved.
 ```
 
+## 18a. RuntimeReleaseManifest
+
+A `RuleSetRelease` and an `EvidenceSetRelease` are versioned separately, so a rule set could reference evidence IDs that happen to resolve in a different, separately reviewed set. A `RuntimeReleaseManifest` removes that ambiguity: it pins one coherent, reviewed, and tested bundle, and runtime loads only the combination the manifest names.
+
+Example:
+
+```yaml
+release_id: wellness_release_v0_1_2026_07
+status: active
+created_at: "2026-07-07"
+rule_set_id: wellness_rules_v0_1_2026_07
+evidence_set_id: wellness_evidence_v0_1_2026_07
+source_snapshot_refs:
+  - gwas_catalog_snapshot_2026_07
+  - dbsnp_snapshot_2026_07
+schema_version: "0.1"
+normalization_version: "0.1"
+review_status: approved
+test_status: passed
+```
+
+Runtime loading rules:
+
+```text
+1. Runtime loads active records only through the active RuntimeReleaseManifest,
+   and only the rule_set_id + evidence_set_id it pins. Loading a rule set or
+   evidence set by ID without the manifest is not allowed.
+2. The rule set and evidence set must agree with the manifest on schema_version,
+   normalization_version, and source_snapshot_refs.
+3. Every evidence_ref in the pinned rule set must resolve within the pinned
+   evidence set, not any other set.
+4. review_status and test_status must be approved/passed on the manifest and on
+   both pinned sets.
+5. Any mismatch is a strict failure: the service fails to load (see the strict
+   loading rule in 05_rule_engine_spec.md section 23).
+```
+
+Content hashes/checksums of the pinned sets are future work; v0.1 pins by ID and enforces version consistency.
+
 ## 19. v0.1 Wellness Domain Objects
 
 For v0.1, the main active runtime objects are:

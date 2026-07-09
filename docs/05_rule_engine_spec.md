@@ -1124,11 +1124,20 @@ Logs must not contain real patient data in v0.1.
 
 Since v0.1 uses synthetic inputs only, logs should still avoid unnecessary sensitive data patterns.
 
-## 35. RuleSetRelease Integration
+## 35. Release Integration
 
-The rule engine should load rules through a `RuleSetRelease`.
+The rule engine loads rules through the active `RuntimeReleaseManifest` (see 02_domain_model.md section 18a), never by picking a `RuleSetRelease` on its own. The manifest pins one coherent bundle: the `rule_set_id`, the `evidence_set_id`, `source_snapshot_refs`, and the `schema_version` / `normalization_version` they share.
 
-Example:
+The rule engine loads only the `rule_set_id` and `evidence_set_id` named by the active manifest, and must verify:
+
+```text
+1. The rule set and evidence set match the manifest schema_version and normalization_version.
+2. The rule set and evidence set match the manifest source_snapshot_refs.
+3. Every evidence_ref in the rule set resolves within the manifest's pinned evidence set.
+4. review_status and test_status are approved/passed on the manifest and both sets.
+```
+
+The referenced `RuleSetRelease` example:
 
 ```yaml
 rule_set_id: wellness_rules_v0_1_2026_07
@@ -1154,6 +1163,8 @@ The rule engine must reject a rule set if:
 4. schema_version is unsupported.
 5. active_rule_refs includes candidate or invalid rules.
 6. active_evidence_refs includes unresolved evidence.
+7. It is not the rule_set_id pinned by the active RuntimeReleaseManifest.
+8. Its schema_version, normalization_version, or source_snapshot_refs disagree with the manifest or the pinned evidence set.
 ```
 
 ## 36. Suggested Interfaces

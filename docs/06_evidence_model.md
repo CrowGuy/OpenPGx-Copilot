@@ -903,6 +903,8 @@ EvidenceSetRelease must not be active unless:
 7. Test status is passed.
 ```
 
+At runtime, an `EvidenceSetRelease` is loaded only when it is the `evidence_set_id` pinned by the active `RuntimeReleaseManifest` (see 02_domain_model.md section 18a). Its `schema_version` and `source_snapshot_refs` must agree with the manifest and the pinned rule set, and a rule set's `evidence_refs` must resolve within this pinned evidence set, not any other set.
+
 ## 26. Wellness Source Strategy
 
 For v0.1 wellness traits, the primary evidence sources are:

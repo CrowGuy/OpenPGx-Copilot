@@ -490,6 +490,44 @@ Evidence traceability passes if:
 5. Candidate evidence cannot satisfy runtime evidence_refs.
 6. Evidence limitations are present.
 7. Evidence allowed_use and disallowed_use are valid.
+8. Every evidence_ref resolves within the evidence set pinned by the active RuntimeReleaseManifest, not any other set.
+```
+
+### 7.5 Release Manifest Tests
+
+These tests pin the atomic release bundle so a rule set and an evidence set can only be served as one reviewed/tested combination.
+
+#### Test: runtime loads only the manifest-pinned pair (release-blocking)
+
+Setup: an active RuntimeReleaseManifest pinning rule_set A + evidence_set A.
+
+Expected:
+
+```text
+1. Runtime loads exactly rule_set A and evidence_set A.
+2. Loading a rule set or evidence set by ID without the manifest is rejected.
+```
+
+#### Test: cross-set evidence reference is rejected (release-blocking)
+
+Setup: rule_set A references an evidence_ref that resolves in evidence_set B but not in the manifest-pinned evidence_set A.
+
+Expected:
+
+```text
+1. Loading fails (strict); the service does not serve.
+2. The reference is treated as unresolved because it is outside the pinned evidence set.
+```
+
+#### Test: version mismatch fails load (release-blocking)
+
+Setup: rule set and evidence set disagree with the manifest on schema_version, normalization_version, or source_snapshot_refs.
+
+Expected:
+
+```text
+1. Loading fails (strict); /health reports unavailable and /pgx/check returns 503.
+2. review_status/test_status must be approved/passed on the manifest and both sets, or load fails.
 ```
 
 ## 8. Safety Tests
@@ -1513,6 +1551,7 @@ The following failures are release-blocking:
 23. Partial or degraded active set served instead of failing (strict mode not enforced): any invalid active rule/evidence must fail the whole load, not serve a subset.
 24. Failed or unsafe LLM output returned to the user instead of the deterministic template fallback.
 25. Output containing a reference outside the allowed reference set (invented evidence/source reference).
+26. Runtime serving a rule_set/evidence_set combination not pinned by an active RuntimeReleaseManifest, or a combination whose schema/normalization/snapshot versions disagree.
 ```
 
 Non-blocking warnings may include:
@@ -1591,6 +1630,7 @@ Before releasing v0.1, the following must pass:
 6. Regression tests.
 7. API integration tests for the four v0.1 endpoints.
 8. Multi-input (batch) tests: mixed partial_success, dedup, conflict, per-input invalid, and top-level schema-fatal.
+9. Release manifest tests: manifest-pinned pair only, cross-set reference rejected, version-mismatch fails load.
 ```
 
 The release-blocking trait bar is MVP-min: ALDH2 (rs671) must work end to end as one active rule. Additional traits are MVP-full targets; their tests are run but do not block release. The candidate-only compiler prototype is non-release-blocking for v0.1.
