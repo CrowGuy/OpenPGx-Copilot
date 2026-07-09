@@ -210,6 +210,8 @@ degraded
 unavailable
 ```
 
+v0.1 serves `POST /pgx/check` only when the rule and evidence sets are `active` (fully loaded under strict mode). `degraded` is not used in a released v0.1 (dev-only / future); a partial or failed active set is reported as `unavailable` and returns 503.
+
 ## 7. POST /pgx/check
 
 ### 7.1 Purpose
@@ -1116,36 +1118,38 @@ GET /health
 }
 ```
 
-### 10.4 Degraded Response
+### 10.4 Unavailable Response
+
+v0.1 uses strict loading: if any active rule or evidence record fails validation, the service does not serve a partial set. It fails startup (fail-closed); if it is started for diagnostics, `/health` returns HTTP 503 with status `unavailable` and `/pgx/check` also returns 503.
 
 ```json
 {
-  "status": "degraded",
+  "status": "unavailable",
   "api_version": "0.1",
   "service": "openpgx-copilot",
   "environment": "local",
   "rule_set": {
     "rule_set_id": "wellness_rules_v0_1_2026_07",
-    "status": "degraded",
-    "loaded_rule_count": 4
+    "status": "unavailable",
+    "loaded_rule_count": 0
   },
   "evidence_set": {
     "evidence_set_id": "wellness_evidence_v0_1_2026_07",
-    "status": "active",
-    "loaded_evidence_count": 5
+    "status": "unavailable",
+    "loaded_evidence_count": 0
   },
   "checks": {
-    "rule_engine": "degraded",
-    "evidence_store": "ok",
+    "rule_engine": "unavailable",
+    "evidence_store": "unavailable",
     "safety_validator": "ok"
   },
   "warnings": [
-    "One active rule failed validation and was not loaded."
+    "An active rule or evidence record failed validation. Strict mode does not serve a partial set."
   ]
 }
 ```
 
-For v0.1 strict mode, degraded rule set loading should usually fail startup rather than silently serving partial results. If degraded mode exists, it should be explicit.
+Partial serving (loading only some active rules) is not part of v0.1; a degraded or partial set is treated as `unavailable` and returns 503.
 
 ## 11. HTTP Status Codes
 
@@ -1169,6 +1173,7 @@ Duplicate and conflicting inputs are 200 with per-input duplicate_ignored / conf
 Advice refusal is 200 with a safe refusal payload.
 Missing active evidence record by ID is 404.
 Rule set unavailable is 503.
+A partial or degraded active set is treated as unavailable (503); v0.1 never serves a partial set.
 ```
 
 ## 12. Safety Requirements

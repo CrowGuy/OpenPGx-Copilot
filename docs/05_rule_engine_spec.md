@@ -837,17 +837,16 @@ At startup or release load time:
 10. Build in-memory rule index.
 ```
 
-If any active rule fails validation, the system may choose one of two policies:
+v0.1 uses strict mode only. If any active RuleRecord or referenced active EvidenceRecord fails validation, the entire rule set load must fail:
 
 ```text
-strict mode:
-fail entire rule set load.
-
-quarantine mode:
-exclude invalid rules and mark rule set degraded.
+strict mode (v0.1, required):
+Any active rule or evidence validation failure fails the whole load.
+The service must fail startup (fail-closed). If a deployment is started for
+diagnostics, /health and /pgx/check must return 503 and must not serve.
 ```
 
-For v0.1, strict mode is recommended.
+Quarantine / degraded mode (excluding invalid rules and serving a partial active set) is not part of v0.1. It is dev-only or future work and must never serve a partial active set in a released v0.1.
 
 ## 24. Rule Indexing
 

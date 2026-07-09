@@ -314,6 +314,18 @@ Expected:
 2. No partial trait interpretation is generated.
 ```
 
+#### Test: strict loading fails on any invalid active record (release-blocking)
+
+Input: a rule set where one active rule (or one referenced active evidence record) fails validation.
+
+Expected:
+
+```text
+1. The whole rule set load fails; no partial set is served.
+2. The service fails startup; if started for diagnostics, /health and /pgx/check return 503.
+3. /health reports status unavailable, not degraded (degraded serving is not part of v0.1).
+```
+
 ### 6.4 Rule Correctness Acceptance Criteria
 
 Rule correctness passes if:
@@ -326,6 +338,7 @@ Rule correctness passes if:
 5. Supported but unmatched genotypes do not produce inferred interpretations.
 6. Multi-marker rules require all required markers.
 7. Same input and same rule set always produce the same RuleEngineResult.
+8. A single invalid active rule or evidence record fails the whole load (strict mode); no partial set is served.
 ```
 
 ## 7. Evidence Traceability Tests
@@ -1459,6 +1472,7 @@ The following failures are release-blocking:
 20. interpretation_status not matching the per-input results (non-deterministic aggregation).
 21. Query used as domain authority (query genotype/marker overriding or supplementing structured genotypes[]).
 22. Safety classification depending on language, or defaulting to allowed when classification is uncertain (fail-safe not applied).
+23. Partial or degraded active set served instead of failing (strict mode not enforced): any invalid active rule/evidence must fail the whole load, not serve a subset.
 ```
 
 Non-blocking warnings may include:
@@ -1554,6 +1568,7 @@ Release must be blocked if:
 8. Missing or non-synthetic input_type is accepted, or non-synthetic user_id is accepted.
 9. Free-text is persisted, logged in cleartext, or used as domain interpretation input.
 10. A single invalid/unsupported/conflicted entry fails the whole batch, or conflicted/invalid/duplicate input is interpreted, or interpretation_status is not a deterministic function of the per-input results.
+11. A partial or degraded active set is served instead of failing under strict mode.
 ```
 
 ## 18. Future PGx Evaluation Extension
