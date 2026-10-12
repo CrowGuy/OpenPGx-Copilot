@@ -1,0 +1,13 @@
+# Data is reproducible from manifests; only reviewed contracts are versioned (ADR-0008)
+/raw/*
+!/raw/gwas_catalog/
+/raw/gwas_catalog/*
+!/raw/gwas_catalog/contracts/
+/profiles/
+/reports/
+
+# Per-run outputs (see docs/gwas-raw-snapshot-playbook.md)
+/discovery-report.json
+/release-config.json
+
+__pycache__/

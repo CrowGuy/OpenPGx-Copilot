@@ -158,3 +158,17 @@ Before reporting completion:
 - Check whether tests or verification match the requested behavior.
 - Check whether any protected boundary was weakened.
 - Remove unnecessary code introduced by this change.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (CrowGuy/OpenPGx-Copilot) via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary (needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: root `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.
