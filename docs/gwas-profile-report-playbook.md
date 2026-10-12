@@ -230,7 +230,7 @@ zip(mapped_trait.split(","), mapped_trait_uri.split(","))
 
 ## 最終要從報告產出什麼
 
-完成審查後，應把人工決策轉成版本化的 dataset contract，例如：
+完成審查後，應把人工決策轉成版本化的 CurationContract（`raw/gwas_catalog/contracts/gwas_curation_contract.json`）。**審查決策以 CurationContract 為準**：每條欄位規則的 `addresses` 註明它處理了哪些 Review Queue 問題類型，不回填 xlsx（xlsx 每次重新產生）。下面是早期草擬的欄位格式示意，實際格式以 contract 檔為準：
 
 ```json
 {
