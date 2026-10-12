@@ -11,8 +11,12 @@
 _Avoid_: 資料庫專案、ETL 專案
 
 **Copilot**:
-未來建立在 GWAS Data Platform 之上的 web／mobile 解讀應用；目前不在 scope 內。
+未來建立在 GWAS Data Platform 之上的 web／mobile 解讀應用；只能讀 Rule Evidence，不能直接讀 Curated Layer。目前不在 scope 內。
 _Avoid_: App、前端、chatbot
+
+**Rule Evidence**:
+從某個 Release 的 Curated Layer 整理、審查後，供 Copilot 使用的證據；是 Copilot 唯一能讀的資料。尚未建置。
+_Avoid_: evidence（單獨使用）、curated data
 
 ### 來源取得
 
@@ -44,6 +48,28 @@ _Avoid_: 匯入設定
 對 RawSnapshot 做的唯讀欄位與欄位配對統計，用來支援人工審查。
 _Avoid_: 資料分析、EDA
 
+### GWAS 內容
+
+**Association**:
+GWAS Catalog 中一筆已發表的 variant（或 variant 組合）與 trait 之間的統計關聯；來源沒有 ID，由 Curated Layer 給代理鍵。
+_Avoid_: hit、signal、finding
+
+**Variant Token**:
+Association 的 SNPS 欄位拆分後的單一識別碼，可能是 rsID、`chr:pos` 座標或其他名稱（例如 HLA allele）。
+_Avoid_: SNP（泛指時有歧義）、rs number
+
+**SNP Combination**:
+一筆 Association 中 Variant Token 之間的關係：`single`、`haplotype`、`interaction`、`list` 或 `alternative`。
+_Avoid_: multi-SNP、SNP set
+
+**Risk Allele**:
+Variant Token 上被報告與 trait 關聯的 allele；`?` 表示來源未標明，不能用來判斷效應方向。
+_Avoid_: effect allele、alt allele
+
+**Locus Alignment**:
+Variant Token 與其染色體位置、risk allele 是否能依位置一一對應；對不上時不配對，標記為 misaligned。
+_Avoid_: zip、pairing
+
 ### Curated 與發布
 
 **CurationContract**:
@@ -74,6 +100,10 @@ _Avoid_: latest、current version、production
 人工核准一個 Candidate 成為 Active Release，同時把前一個 Active Release 標為 `retired` 的動作。
 _Avoid_: deploy、publish、上線
 
+**Required Field**:
+CurationContract 中標記為必要的欄位；解析失敗時整列成為 Rejected Row。非 Required Field 解析失敗時只把該欄設為空值，整列保留。
+_Avoid_: key field、mandatory column
+
 **Rejected Row**:
 違反 CurationContract 而沒有進入 Curated Layer 的來源列，連同違規原因一起保留。
 _Avoid_: bad row、error、dropped row
@@ -83,5 +113,5 @@ CurationContract 規定的 Rejected Row 比例上限；超過時整個 Release �
 _Avoid_: tolerance、容錯率
 
 **Release Pin**:
-下游（例如未來的 Copilot）宣告自己固定使用某個特定 Release，而不是跟隨 Active Release。
+下游（例如產生 Rule Evidence 的整理流程）宣告自己固定使用某個特定 Release，而不是跟隨 Active Release。
 _Avoid_: lock、依賴版本

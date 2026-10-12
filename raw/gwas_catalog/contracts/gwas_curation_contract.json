@@ -1,0 +1,1328 @@
+{
+  "contract": "gwas-curation-contract",
+  "dataset": "nhgri-ebi-gwas-catalog",
+  "version": 1,
+  "genome_build": "GRCh38",
+  "genome_build_applies_to": [
+    "published_associations.CHR_POS",
+    "association_snp.pos"
+  ],
+  "description": "CurationContract: column-level rules turning load_to_curated files of a RawSnapshot into a Release. Generic across Source Releases sharing these format_versions.",
+  "global_rules": {
+    "trim": "leading/trailing whitespace",
+    "empty_after_trim": "null",
+    "unicode_normalization": null,
+    "case_folding": null,
+    "null_tokens_apply_only_where_listed": true,
+    "text_columns_without_null_tokens_are_stored_verbatim": true,
+    "text_columns_note": "tokens like NR/NA in text columns without null_tokens are source values, not NULL; IS NOT NULL does not mean reported",
+    "keep_text_suffix": "_text",
+    "on_parse_failure_values": {
+      "reject_row": "row becomes a Rejected Row (Required Field)",
+      "null": "value stored as NULL; original kept in *_text when keep_text"
+    },
+    "addresses_source": "Review Queue issue codes in the profile report"
+  },
+  "type_vocabulary": {
+    "text": "verbatim string",
+    "integer": "base-10 integer",
+    "decimal": "finite double precision; Infinity/NaN are parse failures",
+    "date": "ISO YYYY-MM-DD",
+    "flag_01": "'0'/'1' to boolean",
+    "yes_no": "'yes'/'no' (case-insensitive) to boolean",
+    "p_value": "'<mantissa>E-<exponent>' to p_value_mantissa numeric + p_value_exponent integer; never a double (ADR-0009)"
+  },
+  "datasets": [
+    {
+      "role": "published_studies",
+      "format_version": "v1.0.3.1",
+      "curated_table": "study",
+      "rejection_threshold": 0.001,
+      "dataset_rules": [
+        {
+          "rule": "unique",
+          "columns": [
+            "STUDY ACCESSION"
+          ],
+          "on_violation": "fail_load"
+        }
+      ],
+      "columns": [
+        {
+          "source_column": "DATE ADDED TO CATALOG",
+          "curated_column": "date_added_to_catalog",
+          "curated_type": "date",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "PUBMED ID",
+          "curated_column": "pubmed_id",
+          "curated_type": "integer",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "FIRST AUTHOR",
+          "curated_column": "first_author",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "DATE",
+          "curated_column": "publication_date",
+          "curated_type": "date",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "JOURNAL",
+          "curated_column": "journal",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "LINK",
+          "curated_column": "link",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "STUDY",
+          "curated_column": "study",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "DISEASE/TRAIT",
+          "curated_column": "disease_trait",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "INITIAL SAMPLE SIZE",
+          "curated_column": "initial_sample_size",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "EMPTY_MULTIVALUE_TOKEN"
+          ]
+        },
+        {
+          "source_column": "REPLICATION SAMPLE SIZE",
+          "curated_column": "replication_sample_size",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "EMPTY_MULTIVALUE_TOKEN",
+            "CANDIDATE_NULL_TOKEN"
+          ]
+        },
+        {
+          "source_column": "PLATFORM [SNPS PASSING QC]",
+          "curated_column": "platform_snps_passing_qc",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "ASSOCIATION COUNT",
+          "curated_column": "association_count",
+          "curated_type": "integer",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "MAPPED_TRAIT",
+          "curated_column": "mapped_trait",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "PAIR_TOKEN_COUNT_MISMATCH"
+          ],
+          "note": "never split: trait names contain ',' and ';'"
+        },
+        {
+          "source_column": "MAPPED_TRAIT_URI",
+          "curated_column": "mapped_trait_uri",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": {
+            "target_table": "study_trait",
+            "separator": ",",
+            "token_trim": true,
+            "foreign_key_to_trait_mappings": false,
+            "token_pattern": "^https?://[^\\s,]+$",
+            "on_invalid_token": "drop_token_flag_row_trait_uri_invalid_and_count_in_load_report"
+          },
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "PAIR_TOKEN_COUNT_MISMATCH"
+          ]
+        },
+        {
+          "source_column": "STUDY ACCESSION",
+          "curated_column": "study_accession",
+          "curated_type": "text",
+          "nullable": false,
+          "required": true,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "reject_row",
+          "addresses": [],
+          "pattern": "^GCST\\d{6,}$"
+        },
+        {
+          "source_column": "GENOTYPING TECHNOLOGY",
+          "curated_column": "genotyping_technology",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "SUBMISSION DATE",
+          "curated_column": "submission_date",
+          "curated_type": "date",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "HIGH_NULL_RATE"
+          ]
+        },
+        {
+          "source_column": "STATISTICAL MODEL",
+          "curated_column": "statistical_model",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "HIGH_NULL_RATE"
+          ]
+        },
+        {
+          "source_column": "BACKGROUND TRAIT",
+          "curated_column": "background_trait",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "HIGH_NULL_RATE"
+          ]
+        },
+        {
+          "source_column": "MAPPED BACKGROUND TRAIT",
+          "curated_column": "mapped_background_trait",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "HIGH_NULL_RATE"
+          ]
+        },
+        {
+          "source_column": "MAPPED BACKGROUND TRAIT URI",
+          "curated_column": "mapped_background_trait_uri",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "HIGH_NULL_RATE"
+          ]
+        },
+        {
+          "source_column": "COHORT",
+          "curated_column": "cohort",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "EMPTY_MULTIVALUE_TOKEN",
+            "CANDIDATE_NULL_TOKEN"
+          ],
+          "note": "'|'-separated, not split in v1"
+        },
+        {
+          "source_column": "FULL SUMMARY STATISTICS",
+          "curated_column": "full_summary_statistics",
+          "curated_type": "yes_no",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "SUMMARY STATS LOCATION",
+          "curated_column": "summary_stats_location",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "CANDIDATE_NULL_TOKEN"
+          ]
+        },
+        {
+          "source_column": "GXE",
+          "curated_column": "gxe",
+          "curated_type": "yes_no",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "DOMINANT_VALUE"
+          ]
+        }
+      ]
+    },
+    {
+      "role": "published_associations",
+      "format_version": "v1.0.2",
+      "curated_table": "association",
+      "surrogate_key": "association_id",
+      "rejection_threshold": 0.001,
+      "dataset_rules": [
+        {
+          "rule": "foreign_key",
+          "columns": [
+            "STUDY ACCESSION"
+          ],
+          "references": "published_studies.STUDY ACCESSION",
+          "on_violation": "reject_row"
+        },
+        {
+          "rule": "keep_full_duplicate_rows",
+          "reason": "study ASSOCIATION COUNT counts them as distinct associations"
+        }
+      ],
+      "columns": [
+        {
+          "source_column": "DATE ADDED TO CATALOG",
+          "curated_column": "date_added_to_catalog",
+          "curated_type": "date",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "PUBMEDID",
+          "curated_column": "pubmed_id",
+          "curated_type": "integer",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "FIRST AUTHOR",
+          "curated_column": "first_author",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "DATE",
+          "curated_column": "publication_date",
+          "curated_type": "date",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "JOURNAL",
+          "curated_column": "journal",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "LINK",
+          "curated_column": "link",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "STUDY",
+          "curated_column": "study",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "NORMALIZATION_IMPACT"
+          ]
+        },
+        {
+          "source_column": "DISEASE/TRAIT",
+          "curated_column": "disease_trait",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "INITIAL SAMPLE SIZE",
+          "curated_column": "initial_sample_size",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "EMPTY_MULTIVALUE_TOKEN",
+            "DUPLICATE_MULTIVALUE_TOKEN",
+            "NORMALIZATION_IMPACT"
+          ],
+          "note": "free text, not parsed; structured counts live in ancestries"
+        },
+        {
+          "source_column": "REPLICATION SAMPLE SIZE",
+          "curated_column": "replication_sample_size",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "EMPTY_MULTIVALUE_TOKEN",
+            "CANDIDATE_NULL_TOKEN"
+          ],
+          "note": "free text, not parsed"
+        },
+        {
+          "source_column": "REGION",
+          "curated_column": "region",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "CANDIDATE_NULL_TOKEN"
+          ]
+        },
+        {
+          "source_column": "CHR_ID",
+          "curated_column": "chr_id",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "TYPE_PARSE_FAILURE",
+            "DUPLICATE_MULTIVALUE_TOKEN",
+            "LENGTH_OUTLIER"
+          ],
+          "note": "kept verbatim; per-variant chr in association_snp.chr (text: X/Y/MT)"
+        },
+        {
+          "source_column": "CHR_POS",
+          "curated_column": "chr_pos",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "TYPE_PARSE_FAILURE",
+            "LENGTH_OUTLIER"
+          ],
+          "note": "kept verbatim; per-variant integer in association_snp.pos"
+        },
+        {
+          "source_column": "REPORTED GENE(S)",
+          "curated_column": "reported_genes",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "CANDIDATE_NULL_TOKEN"
+          ]
+        },
+        {
+          "source_column": "MAPPED_GENE",
+          "curated_column": "mapped_gene",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "DUPLICATE_MULTIVALUE_TOKEN"
+          ],
+          "note": "not split in v1"
+        },
+        {
+          "source_column": "UPSTREAM_GENE_ID",
+          "curated_column": "upstream_gene_id",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "DOWNSTREAM_GENE_ID",
+          "curated_column": "downstream_gene_id",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "SNP_GENE_IDS",
+          "curated_column": "snp_gene_ids",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "UPSTREAM_GENE_DISTANCE",
+          "curated_column": "upstream_gene_distance",
+          "curated_type": "integer",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "DOWNSTREAM_GENE_DISTANCE",
+          "curated_column": "downstream_gene_distance",
+          "curated_type": "integer",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "STRONGEST SNP-RISK ALLELE",
+          "curated_column": "strongest_snp_risk_allele",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [],
+          "note": "kept verbatim; per-variant allele in association_snp.risk_allele"
+        },
+        {
+          "source_column": "SNPS",
+          "curated_column": "snps",
+          "curated_type": "text",
+          "nullable": false,
+          "required": true,
+          "null_tokens": [],
+          "split_rule": {
+            "target_table": "association_snp",
+            "combination_rules": [
+              {
+                "separator": " x ",
+                "snp_combination": "interaction"
+              },
+              {
+                "separator": ";",
+                "snp_combination": "haplotype"
+              },
+              {
+                "separator": "/",
+                "snp_combination": "alternative"
+              },
+              {
+                "separator": ",",
+                "snp_combination": "list"
+              }
+            ],
+            "default_snp_combination": "single",
+            "token_trim": true,
+            "variant_kind_rules": [
+              {
+                "variant_kind": "rsid",
+                "pattern": "^rs(\\d+)$"
+              },
+              {
+                "variant_kind": "chr_pos",
+                "pattern": "(?i)^(?:chr)?([0-9]{1,2}|X|Y|MT):(\\d+)$"
+              }
+            ],
+            "default_variant_kind": "other",
+            "aligned_columns": [
+              "CHR_ID",
+              "CHR_POS",
+              "STRONGEST SNP-RISK ALLELE"
+            ],
+            "alignment": "positional_only_if_token_counts_equal",
+            "on_misaligned": "aligned_values_null_and_flag",
+            "on_empty_token": "drop_token_and_flag_misaligned",
+            "chr_pos_kind_takes_locus_from_token": true,
+            "risk_allele": "text after the last '-' of the aligned token, verbatim; '?' means the source did not specify the risk allele"
+          },
+          "keep_text": null,
+          "on_parse_failure": "reject_row",
+          "addresses": [
+            "LENGTH_OUTLIER",
+            "DUPLICATE_MULTIVALUE_TOKEN"
+          ],
+          "note": "required = non-empty; any Variant Token form accepted"
+        },
+        {
+          "source_column": "MERGED",
+          "curated_column": "merged",
+          "curated_type": "flag_01",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "DOMINANT_VALUE"
+          ]
+        },
+        {
+          "source_column": "SNP_ID_CURRENT",
+          "curated_column": "snp_id_current",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "TYPE_PARSE_FAILURE"
+          ],
+          "note": "text: 21 non-integer values"
+        },
+        {
+          "source_column": "CONTEXT",
+          "curated_column": "context",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "DUPLICATE_MULTIVALUE_TOKEN"
+          ],
+          "note": "not split in v1"
+        },
+        {
+          "source_column": "INTERGENIC",
+          "curated_column": "intergenic",
+          "curated_type": "flag_01",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "RISK ALLELE FREQUENCY",
+          "curated_column": "risk_allele_frequency",
+          "curated_type": "decimal",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [
+            "NR",
+            "NA"
+          ],
+          "split_rule": null,
+          "keep_text": true,
+          "on_parse_failure": "null",
+          "addresses": [
+            "TYPE_PARSE_FAILURE",
+            "CANDIDATE_NULL_TOKEN"
+          ],
+          "range": [
+            0,
+            1
+          ],
+          "note": "ranges, text and out-of-range values parse to NULL"
+        },
+        {
+          "source_column": "P-VALUE",
+          "curated_column": "p_value",
+          "curated_type": "p_value",
+          "nullable": false,
+          "required": true,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": true,
+          "on_parse_failure": "reject_row",
+          "addresses": [],
+          "note": "produces p_value_mantissa, p_value_exponent, p_value_text"
+        },
+        {
+          "source_column": "PVALUE_MLOG",
+          "curated_column": "pvalue_mlog",
+          "curated_type": "decimal",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [],
+          "note": "use for significance filtering (ADR-0009)"
+        },
+        {
+          "source_column": "P-VALUE (TEXT)",
+          "curated_column": "p_value_qualifier",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "CANDIDATE_NULL_TOKEN"
+          ],
+          "note": "renamed to avoid clashing with p_value_text"
+        },
+        {
+          "source_column": "OR or BETA",
+          "curated_column": "or_beta",
+          "curated_type": "decimal",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": true,
+          "on_parse_failure": "null",
+          "addresses": [
+            "TYPE_PARSE_FAILURE"
+          ],
+          "note": "Infinity parses to NULL"
+        },
+        {
+          "source_column": "95% CI (TEXT)",
+          "curated_column": "ci_text",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "CANDIDATE_NULL_TOKEN"
+          ]
+        },
+        {
+          "source_column": "PLATFORM [SNPS PASSING QC]",
+          "curated_column": "platform_snps_passing_qc",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "CNV",
+          "curated_column": "cnv",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "DOMINANT_VALUE"
+          ]
+        },
+        {
+          "source_column": "MAPPED_TRAIT",
+          "curated_column": "mapped_trait",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "PAIR_TOKEN_COUNT_MISMATCH",
+            "NORMALIZATION_IMPACT"
+          ],
+          "note": "never split: trait names contain ',' and ';'"
+        },
+        {
+          "source_column": "MAPPED_TRAIT_URI",
+          "curated_column": "mapped_trait_uri",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": {
+            "target_table": "association_trait",
+            "separator": ",",
+            "token_trim": true,
+            "foreign_key_to_trait_mappings": false,
+            "token_pattern": "^https?://[^\\s,]+$",
+            "on_invalid_token": "drop_token_flag_row_trait_uri_invalid_and_count_in_load_report"
+          },
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "PAIR_TOKEN_COUNT_MISMATCH"
+          ]
+        },
+        {
+          "source_column": "STUDY ACCESSION",
+          "curated_column": "study_accession",
+          "curated_type": "text",
+          "nullable": false,
+          "required": true,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "reject_row",
+          "addresses": [],
+          "pattern": "^GCST\\d{6,}$"
+        },
+        {
+          "source_column": "GENOTYPING TECHNOLOGY",
+          "curated_column": "genotyping_technology",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        }
+      ]
+    },
+    {
+      "role": "published_ancestries",
+      "format_version": "v1.0.3.1",
+      "curated_table": "ancestry",
+      "surrogate_key": "ancestry_id",
+      "rejection_threshold": 0.001,
+      "dataset_rules": [
+        {
+          "rule": "foreign_key",
+          "columns": [
+            "STUDY ACCESSION"
+          ],
+          "references": "published_studies.STUDY ACCESSION",
+          "on_violation": "reject_row"
+        },
+        {
+          "rule": "studies_without_ancestry_allowed",
+          "reason": "known source condition (16 in r2026-08-22)"
+        }
+      ],
+      "columns": [
+        {
+          "source_column": "STUDY ACCESSION",
+          "curated_column": "study_accession",
+          "curated_type": "text",
+          "nullable": false,
+          "required": true,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "reject_row",
+          "addresses": [],
+          "pattern": "^GCST\\d{6,}$"
+        },
+        {
+          "source_column": "PUBMED ID",
+          "curated_column": "pubmed_id",
+          "curated_type": "integer",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "FIRST AUTHOR",
+          "curated_column": "first_author",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "DATE",
+          "curated_column": "publication_date",
+          "curated_type": "date",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "INITIAL SAMPLE DESCRIPTION",
+          "curated_column": "initial_sample_description",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "EMPTY_MULTIVALUE_TOKEN"
+          ]
+        },
+        {
+          "source_column": "REPLICATION SAMPLE DESCRIPTION",
+          "curated_column": "replication_sample_description",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "EMPTY_MULTIVALUE_TOKEN",
+            "CANDIDATE_NULL_TOKEN"
+          ]
+        },
+        {
+          "source_column": "STAGE",
+          "curated_column": "stage",
+          "curated_type": "text",
+          "nullable": false,
+          "required": true,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "reject_row",
+          "addresses": [],
+          "enum": [
+            "initial",
+            "replication"
+          ]
+        },
+        {
+          "source_column": "NUMBER OF INDIVIDUALS",
+          "curated_column": "number_of_individuals",
+          "curated_type": "integer",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "BROAD ANCESTRAL CATEGORY",
+          "curated_column": "broad_ancestral_category",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "CANDIDATE_NULL_TOKEN"
+          ]
+        },
+        {
+          "source_column": "COUNTRY OF ORIGIN",
+          "curated_column": "country_of_origin",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "CANDIDATE_NULL_TOKEN",
+            "DOMINANT_VALUE"
+          ]
+        },
+        {
+          "source_column": "COUNTRY OF RECRUITMENT",
+          "curated_column": "country_of_recruitment",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "CANDIDATE_NULL_TOKEN"
+          ]
+        },
+        {
+          "source_column": "ADDITIONAL ANCESTRY DESCRIPTION",
+          "curated_column": "additional_ancestry_description",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "EMPTY_MULTIVALUE_TOKEN"
+          ]
+        },
+        {
+          "source_column": "ANCESTRY DESCRIPTOR",
+          "curated_column": "ancestry_descriptor",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "WHITESPACE_ONLY_VALUE"
+          ]
+        },
+        {
+          "source_column": "FOUNDER/GENETICALLY ISOLATED POPULATION",
+          "curated_column": "founder_genetically_isolated_population",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "HIGH_NULL_RATE"
+          ]
+        },
+        {
+          "source_column": "NUMBER OF CASES",
+          "curated_column": "number_of_cases",
+          "curated_type": "integer",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "HIGH_NULL_RATE"
+          ]
+        },
+        {
+          "source_column": "NUMBER OF CONTROLS",
+          "curated_column": "number_of_controls",
+          "curated_type": "integer",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "HIGH_NULL_RATE"
+          ]
+        },
+        {
+          "source_column": "SAMPLE DESCRIPTION",
+          "curated_column": "sample_description",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "HIGH_NULL_RATE"
+          ]
+        }
+      ]
+    },
+    {
+      "role": "trait_mappings",
+      "format_version": null,
+      "curated_table": "trait_mapping",
+      "rejection_threshold": 0.001,
+      "dataset_rules": [
+        {
+          "rule": "unique",
+          "columns": [
+            "Disease trait",
+            "EFO URI"
+          ],
+          "on_violation": "fail_load"
+        }
+      ],
+      "columns": [
+        {
+          "source_column": "Disease trait",
+          "curated_column": "disease_trait",
+          "curated_type": "text",
+          "nullable": false,
+          "required": true,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "reject_row",
+          "addresses": [
+            "EMPTY_MULTIVALUE_TOKEN"
+          ]
+        },
+        {
+          "source_column": "EFO term",
+          "curated_column": "efo_term",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": [
+            "PAIR_TOKEN_COUNT_MISMATCH"
+          ],
+          "note": "never split"
+        },
+        {
+          "source_column": "EFO URI",
+          "curated_column": "efo_uri",
+          "curated_type": "text",
+          "nullable": false,
+          "required": true,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "reject_row",
+          "addresses": []
+        },
+        {
+          "source_column": "Parent term",
+          "curated_column": "parent_term",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        },
+        {
+          "source_column": "Parent URI",
+          "curated_column": "parent_uri",
+          "curated_type": "text",
+          "nullable": true,
+          "required": false,
+          "null_tokens": [],
+          "split_rule": null,
+          "keep_text": null,
+          "on_parse_failure": "null",
+          "addresses": []
+        }
+      ]
+    }
+  ]
+}
