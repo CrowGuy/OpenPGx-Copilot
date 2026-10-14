@@ -8,7 +8,7 @@ Connection: --dsn, or the standard libpq PG* environment variables / ~/.pgpass w
 Rows violating the CurationContract become Rejected Rows; over the Rejection Threshold the whole load fails (ADR-0007).
 Before connecting, load checks its inputs (#6): the RawSnapshot's _SUCCESS marker and checksums, the CurationContract's
 shape, and each loaded file's Load Policy and header (DatasetContract) and format_version (CurationContract).
-Scope: studies, associations and ancestries so far (#4, #5, #7, #9); traits (#8) follow.
+Scope: studies, associations, ancestries and trait mappings (#4, #5, #7, #8, #9).
 """
 
 from __future__ import annotations
@@ -43,8 +43,8 @@ P_VALUE_RE = re.compile(r"^(\d+(?:\.\d+)?)E-(\d+)$")
 INT4_MIN, INT4_MAX = -(2**31), 2**31 - 1
 # The curated_type values parse_value handles; checked up front so an all-empty column cannot hide an unknown type.
 CURATED_TYPES = {"text", "integer", "decimal", "flag_01", "p_value", "date", "yes_no"}
-# Loaded in this order so foreign_key rules see the datasets they reference; traits (#8) follow.
-LOADED_ROLES = ("published_studies", "published_associations", "published_ancestries")
+# Loaded in this order so foreign_key rules see the datasets they reference.
+LOADED_ROLES = ("published_studies", "published_associations", "published_ancestries", "trait_mappings")
 # keep_full_duplicate_rows and studies_without_ancestry_allowed only declare that the loader enforces nothing.
 DATASET_RULES = {
     ("unique", "fail_load"),
@@ -60,6 +60,14 @@ SNP_SPLIT_POLICY = {
     "token_trim": True,
     "chr_pos_kind_takes_locus_from_token": True,
 }
+# The MAPPED_TRAIT_URI split_rule policies the loader implements; separator and token_pattern come from the rule.
+TRAIT_SPLIT_POLICY = {
+    "token_trim": True,
+    "foreign_key_to_trait_mappings": False,
+    "on_invalid_token": "drop_token_flag_row_trait_uri_invalid_and_count_in_load_report",
+}
+# Trait URI split_rule target_table -> the parent key column each of its rows repeats.
+TRAIT_TABLES = {"association_trait": "association_id", "study_trait": "study_accession"}
 SNP_COLUMNS = ("association_id", "position", "variant_token", "variant_kind", "rsid", "chr", "pos", "risk_allele")
 
 
@@ -134,12 +142,28 @@ def loaded_datasets(contract: Any) -> list[dict[str, Any]]:
             )
             split_rule = column.get("split_rule")
             require(split_rule is None or isinstance(split_rule, dict), f"{name}.split_rule must be an object or null")
-            require(
-                not split_rule
-                or split_rule.get("target_table") != "association_snp"
-                or all(split_rule.get(key) == value for key, value in SNP_SPLIT_POLICY.items()),
-                f"{name}: unsupported SNPS split_rule policy, expected {SNP_SPLIT_POLICY}",
-            )
+            if split_rule:
+                target = split_rule.get("target_table")
+                require(
+                    target == "association_snp" or target in TRAIT_TABLES,
+                    f"{name}: unsupported split_rule target_table {target!r}",
+                )
+                require(
+                    target != "association_snp"
+                    or all(split_rule.get(key) == value for key, value in SNP_SPLIT_POLICY.items()),
+                    f"{name}: unsupported SNPS split_rule policy, expected {SNP_SPLIT_POLICY}",
+                )
+                require(
+                    target not in TRAIT_TABLES
+                    or (
+                        all(split_rule.get(key) == value for key, value in TRAIT_SPLIT_POLICY.items())
+                        and bool(split_rule.get("separator"))
+                        and isinstance(split_rule["separator"], str)
+                        and isinstance(split_rule.get("token_pattern"), str)
+                    ),
+                    f"{name}: unsupported trait URI split_rule policy, expected {TRAIT_SPLIT_POLICY}, "
+                    "a separator and a token_pattern",
+                )
         datasets.append(dataset)
     return datasets
 
@@ -269,7 +293,6 @@ def load_dataset(
         curated += [f"{name}_mantissa", f"{name}_exponent"] if column["curated_type"] == "p_value" else [name]
         if column["keep_text"]:
             curated.append(f"{name}_text")
-    # ponytail: only the SNPS split; the MAPPED_TRAIT_URI split into association_trait comes with #8.
     snp_column = next(
         (c for c in columns if c["split_rule"] and c["split_rule"]["target_table"] == "association_snp"), None
     )
@@ -278,6 +301,14 @@ def load_dataset(
         snp_index = header.index(snp_column["source_column"])
         aligned_indexes = [header.index(name) for name in snp_rule["aligned_columns"]]
         curated += ["snp_combination", "misaligned"]
+    trait_column = next(
+        (c for c in columns if c["split_rule"] and c["split_rule"]["target_table"] in TRAIT_TABLES), None
+    )
+    if trait_column:
+        trait_rule = trait_column["split_rule"]
+        trait_table = trait_rule["target_table"]
+        trait_key_index = curated.index(TRAIT_TABLES[trait_table])
+        curated.append("trait_uri_invalid")
     copy_sql = sql.SQL("COPY {} ({}) FROM STDIN").format(
         sql.Identifier(dataset["curated_table"]), sql.SQL(", ").join(map(sql.Identifier, curated))
     )
@@ -285,10 +316,14 @@ def load_dataset(
     rejected: list[tuple[str, int, str, str, str]] = []
     reasons: collections.Counter[str] = collections.Counter()
     nulled: collections.Counter[str] = collections.Counter()
-    source_rows = loaded_rows = 0
-    # Association children are spooled to disk and copied after their parents: one connection runs one COPY at a time.
-    with tempfile.TemporaryFile() as spool:
-        with conn.cursor().copy(copy_sql) as copy, Copy(conn.cursor(), writer=FileWriter(spool)) as snp_copy:
+    source_rows = loaded_rows = trait_uri_invalid_rows = 0
+    # Child rows are spooled to disk and copied after their parents: one connection runs one COPY at a time.
+    with tempfile.TemporaryFile() as snp_spool, tempfile.TemporaryFile() as trait_spool:
+        with (
+            conn.cursor().copy(copy_sql) as copy,
+            Copy(conn.cursor(), writer=FileWriter(snp_spool)) as snp_copy,
+            Copy(conn.cursor(), writer=FileWriter(trait_spool)) as trait_copy,
+        ):
             for line_number, row in iter_rows(path, len(header)):
                 source_rows += 1
                 values: list[Any] = []
@@ -327,6 +362,9 @@ def load_dataset(
                 for column_name, loaded in referenced:
                     loaded.add(parsed[column_name])
                 loaded_rows += 1
+                # From here on values lines up with curated, which trait_key_index points into.
+                if "surrogate_key" in dataset:
+                    values.insert(0, loaded_rows)
                 if snp_column:
                     combination, misaligned, variants = split_variants(
                         row[snp_index], [row[i] for i in aligned_indexes], snp_rule
@@ -334,7 +372,15 @@ def load_dataset(
                     values += [combination, misaligned]
                     for variant in variants:
                         snp_copy.write_row((loaded_rows, *variant))
-                copy.write_row([loaded_rows, *values] if "surrogate_key" in dataset else values)
+                if trait_column:
+                    uris = parsed[trait_column["source_column"]]
+                    tokens = [token.strip() for token in uris.split(trait_rule["separator"])] if uris else []
+                    valid = [token for token in tokens if re.fullmatch(trait_rule["token_pattern"], token)]
+                    values.append(len(valid) < len(tokens))
+                    trait_uri_invalid_rows += len(valid) < len(tokens)
+                    for uri in dict.fromkeys(valid):
+                        trait_copy.write_row((values[trait_key_index], uri))
+                copy.write_row(values)
 
         rejected_rows = source_rows - loaded_rows
         ratio = rejected_rows / source_rows if source_rows else 0.0
@@ -348,6 +394,9 @@ def load_dataset(
             "rejection_reasons": dict(reasons),
             "nulled_values": dict(nulled),
         }
+        if trait_column:
+            # Dropped URI tokens flag their row but do not make it a Rejected Row.
+            report["trait_uri_invalid_rows"] = trait_uri_invalid_rows
         log(f"Load report for {role}: {json.dumps(report, ensure_ascii=False)}")
         if ratio > threshold:
             raise LoaderError(f"{role}: Rejected Row ratio {ratio:.4%} exceeds Rejection Threshold {threshold:.4%}")
@@ -357,9 +406,17 @@ def load_dataset(
             for violation in rejected:
                 copy.write_row(violation)
         if snp_column:
-            spool.seek(0)
+            snp_spool.seek(0)
             with conn.cursor().copy(f"COPY association_snp ({', '.join(SNP_COLUMNS)}) FROM STDIN") as copy:
-                while chunk := spool.read(1 << 20):
+                while chunk := snp_spool.read(1 << 20):
+                    copy.write(chunk)
+        if trait_column:
+            trait_spool.seek(0)
+            trait_sql = sql.SQL("COPY {} ({}, efo_uri) FROM STDIN").format(
+                sql.Identifier(trait_table), sql.Identifier(TRAIT_TABLES[trait_table])
+            )
+            with conn.cursor().copy(trait_sql) as copy:
+                while chunk := trait_spool.read(1 << 20):
                     copy.write(chunk)
     return report
 

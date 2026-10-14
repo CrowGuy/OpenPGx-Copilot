@@ -26,7 +26,9 @@ CREATE TABLE study (
     cohort text,
     full_summary_statistics boolean,
     summary_stats_location text,
-    gxe boolean
+    gxe boolean,
+    -- A MAPPED_TRAIT_URI token failed the CurationContract token_pattern and is missing from study_trait.
+    trait_uri_invalid boolean NOT NULL
 );
 
 -- One row per published_associations source row; full duplicates are kept, each with its own association_id.
@@ -77,7 +79,9 @@ CREATE TABLE association (
     genotyping_technology text,
     snp_combination text NOT NULL,
     -- Locus Alignment failed: Variant Token and CHR_ID/CHR_POS/risk allele counts differ, so they are not paired.
-    misaligned boolean NOT NULL
+    misaligned boolean NOT NULL,
+    -- A MAPPED_TRAIT_URI token failed the CurationContract token_pattern and is missing from association_trait.
+    trait_uri_invalid boolean NOT NULL
 );
 CREATE INDEX ON association (study_accession);
 
@@ -119,6 +123,34 @@ CREATE TABLE ancestry (
     sample_description text
 );
 CREATE INDEX ON ancestry (study_accession);
+
+-- One row per distinct valid URI of mapped_trait_uri; MAPPED_TRAIT names are never split (they contain commas).
+-- No foreign key to trait_mapping: URIs absent from it are kept.
+CREATE TABLE association_trait (
+    association_id bigint NOT NULL REFERENCES association,
+    efo_uri text NOT NULL,
+    PRIMARY KEY (association_id, efo_uri)
+);
+CREATE INDEX ON association_trait (efo_uri);
+
+-- The same split of study.mapped_trait_uri.
+CREATE TABLE study_trait (
+    study_accession text NOT NULL REFERENCES study,
+    efo_uri text NOT NULL,
+    PRIMARY KEY (study_accession, efo_uri)
+);
+CREATE INDEX ON study_trait (efo_uri);
+
+-- One row per trait_mappings source row: a Disease trait and the EFO term it maps to, with that term's parent.
+CREATE TABLE trait_mapping (
+    disease_trait text NOT NULL,
+    efo_term text,
+    efo_uri text NOT NULL,
+    parent_term text,
+    parent_uri text,
+    PRIMARY KEY (disease_trait, efo_uri)
+);
+CREATE INDEX ON trait_mapping (efo_uri);
 
 -- Rejected Rows (ADR-0007): one row per Required Field violation of a source row kept out of the Curated Layer.
 CREATE TABLE rejected_row (

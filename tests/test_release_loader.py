@@ -36,6 +36,7 @@ SNAPSHOT = ROOT / "tests" / "fixtures" / "r2000-01-01"
 STUDIES_FILE = "gwas-catalog-v1.0.3.1-studies-r2000-01-01.tsv"
 ASSOCIATIONS_FILE = "gwas-catalog-download-associations-alt-full.tsv"
 ANCESTRIES_FILE = "gwas-catalog-v1.0.3.1-ancestries-r2000-01-01.tsv"
+TRAIT_MAPPINGS_FILE = "gwas_catalog_trait-mappings_r2000-01-01.tsv"
 CONTRACT = ROOT / "raw" / "gwas_catalog" / "contracts" / "gwas_curation_contract.json"
 DATASET_CONTRACT = ROOT / "raw" / "gwas_catalog" / "contracts" / "gwas_dataset_contract.json"
 # Nothing listens here: a load that reports a validation error against it failed before touching the database.
@@ -98,6 +99,16 @@ def ancestries_with_violations(header: list[str], rows: list[list[str]]) -> None
     rows[1][col("STAGE")] = "Initial"
     rows[2][col("STAGE")] = " "
     rows[3][col("STUDY ACCESSION")] = "GCST999999"
+
+
+def association_with_invalid_trait_uri(header: list[str], rows: list[list[str]]) -> None:
+    """Line 2 (rs2469956) adds a URI token that does not match the CurationContract token_pattern."""
+    rows[0][header.index("MAPPED_TRAIT_URI")] = "http://www.ebi.ac.uk/efo/EFO_0007702, EFO_0000001"
+
+
+def study_with_empty_trait_uri_token(header: list[str], rows: list[list[str]]) -> None:
+    """GCST006430 (line 8) gets an empty token between its two URIs; an empty token fails token_pattern too."""
+    rows[6][header.index("MAPPED_TRAIT_URI")] = "http://www.ebi.ac.uk/efo/EFO_0004343, , http://www.ebi.ac.uk/efo/EFO_0004340"
 
 
 def swap_date_and_journal(header: list[str], rows: list[list[str]]) -> None:
@@ -223,6 +234,15 @@ class PreLoadValidationTest(unittest.TestCase):
             columns = dataset_of(contract, "published_associations")["columns"]
             next(c for c in columns if c["source_column"] == "SNPS")["split_rule"]["token_trim"] = False
 
+        def unsupported_trait_policy(contract: dict) -> None:
+            columns = dataset_of(contract, "published_studies")["columns"]
+            split_rule = next(c for c in columns if c["source_column"] == "MAPPED_TRAIT_URI")["split_rule"]
+            split_rule["foreign_key_to_trait_mappings"] = True
+
+        def unknown_split_target(contract: dict) -> None:
+            columns = dataset_of(contract, "published_studies")["columns"]
+            next(c for c in columns if c["source_column"] == "MAPPED_TRAIT")["split_rule"] = {"target_table": "x"}
+
         cases = {
             "genome_build must be a non-empty string": drop_genome_build,
             "version must be an integer": text_version,
@@ -231,6 +251,8 @@ class PreLoadValidationTest(unittest.TestCase):
             "published_studies.rejection_threshold must be a number between 0 and 1": threshold_over_one,
             "published_studies: unsupported dataset rule": unsupported_dataset_rule,
             "published_associations.SNPS: unsupported SNPS split_rule policy": unsupported_snp_policy,
+            "published_studies.MAPPED_TRAIT_URI: unsupported trait URI split_rule policy": unsupported_trait_policy,
+            "published_studies.MAPPED_TRAIT: unsupported split_rule target_table 'x'": unknown_split_target,
         }
         for message, edit in cases.items():
             with self.subTest(message=message):
@@ -319,7 +341,9 @@ class ReleaseLoaderTest(unittest.TestCase):
             )
             self.assertEqual(rows, [(0,)], table)
         (roles,) = self.query(ETL_DSN, "SELECT array(SELECT jsonb_object_keys(load_report)) FROM meta.release")[0]
-        self.assertEqual(sorted(roles), ["published_ancestries", "published_associations", "published_studies"])
+        self.assertEqual(
+            sorted(roles), ["published_ancestries", "published_associations", "published_studies", "trait_mappings"]
+        )
 
     def test_meta_records_what_the_release_was_built_from(self) -> None:
         self.assertEqual(self.load(), 0)
@@ -372,6 +396,7 @@ class ReleaseLoaderTest(unittest.TestCase):
         contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
         studies = next(d for d in contract["datasets"] if d["role"] == "published_studies")
         expected = {c["curated_column"]: PG_TYPES[c["curated_type"]] for c in studies["columns"]}
+        expected["trait_uri_invalid"] = "boolean"
         actual = dict(
             self.query(
                 ETL_DSN,
@@ -427,6 +452,7 @@ class ReleaseLoaderTest(unittest.TestCase):
             "rejection_threshold": 0.1,
             "rejection_reasons": {"STUDY ACCESSION: empty": 1, "STUDY ACCESSION: pattern_mismatch": 1},
             "nulled_values": {"PUBMED ID": 1, "DATE": 1, "GXE": 1},
+            "trait_uri_invalid_rows": 0,
         }
         self.assertEqual(report, expected)
 
@@ -619,6 +645,118 @@ class ReleaseLoaderTest(unittest.TestCase):
             ],
         )
         self.assertEqual(self.query(ETL_DSN, "SELECT count(*) FROM gwas_r2000_01_02.ancestry"), [(38,)])
+
+    def test_association_and_study_queryable_by_efo_uri(self) -> None:
+        self.assertEqual(self.load(), 0)
+        self.assertEqual(self.promote(), 0)
+        uri = "http://www.ebi.ac.uk/efo/EFO_0007702"
+        associations = self.query(
+            ANALYST_DSN,
+            "SELECT a.snps, a.study_accession FROM gwas.association_trait t JOIN gwas.association a "
+            "USING (association_id) WHERE t.efo_uri = %s ORDER BY a.snps",
+            (uri,),
+        )
+        self.assertEqual(associations, [("rs2469956", "GCST006143"), ("rs416486", "GCST006143")])
+        studies = self.query(
+            ANALYST_DSN,
+            "SELECT s.study_accession, s.disease_trait FROM gwas.study_trait t JOIN gwas.study s "
+            "USING (study_accession) WHERE t.efo_uri = %s",
+            (uri,),
+        )
+        self.assertEqual(studies, [("GCST006143", "Bone mineral density (total hip)")])
+
+    def test_each_uri_finds_its_association_and_trait_names_are_not_split(self) -> None:
+        self.assertEqual(self.load(), 0)
+        uris = ["http://purl.obolibrary.org/obo/MONDO_0005138", "http://www.ebi.ac.uk/efo/EFO_0006953"]
+        for uri in uris:
+            with self.subTest(uri=uri):
+                rows = self.query(
+                    ETL_DSN,
+                    f"SELECT a.snps FROM {SCHEMA}.association_trait t JOIN {SCHEMA}.association a "
+                    f"USING (association_id) WHERE t.efo_uri = %s ORDER BY a.snps",
+                    (uri,),
+                )
+                expected = ["12:57498220", "rs1996371 x rs9375980"] if "MONDO" in uri else ["12:57498220"]
+                self.assertEqual(rows, [(snps,) for snps in expected])
+        rows = self.query(
+            ETL_DSN,
+            f"SELECT a.mapped_trait, a.trait_uri_invalid, array_agg(t.efo_uri ORDER BY t.efo_uri) "
+            f"FROM {SCHEMA}.association a JOIN {SCHEMA}.association_trait t USING (association_id) "
+            f"WHERE a.snps = '12:57498220' GROUP BY a.mapped_trait, a.trait_uri_invalid",
+        )
+        self.assertEqual(rows, [("lung carcinoma, family history of lung cancer", False, uris)])
+        rows = self.query(
+            ETL_DSN,
+            f"SELECT s.mapped_trait, array_agg(t.efo_uri ORDER BY t.efo_uri) FROM {SCHEMA}.study s "
+            f"JOIN {SCHEMA}.study_trait t USING (study_accession) WHERE s.study_accession = 'GCST006430' "
+            f"GROUP BY s.mapped_trait",
+        )
+        study_uris = ["http://www.ebi.ac.uk/efo/EFO_0004340", "http://www.ebi.ac.uk/efo/EFO_0004343"]
+        self.assertEqual(rows, [("waist-hip ratio, body mass index", study_uris)])
+
+    def test_uri_absent_from_trait_mappings_is_kept(self) -> None:
+        self.assertEqual(self.load(), 0)
+        rows = self.query(
+            ETL_DSN,
+            f"SELECT a.snps, m.efo_term FROM {SCHEMA}.association_trait t "
+            f"JOIN {SCHEMA}.association a USING (association_id) "
+            f"LEFT JOIN {SCHEMA}.trait_mapping m USING (efo_uri) WHERE t.efo_uri = %s",
+            ("http://purl.obolibrary.org/obo/MONDO_0005068",),
+        )
+        self.assertEqual(rows, [("rs671", None)])
+
+    def test_efo_term_and_parent_by_uri_join(self) -> None:
+        self.assertEqual(self.load(), 0)
+        self.assertEqual(self.promote(), 0)
+        rows = self.query(
+            ANALYST_DSN,
+            "SELECT m.efo_term, m.parent_term, m.parent_uri FROM gwas.association a "
+            "JOIN gwas.association_trait t USING (association_id) JOIN gwas.trait_mapping m USING (efo_uri) "
+            "WHERE a.snps = 'rs671' OR a.snps = 'rs2469956'",
+        )
+        self.assertEqual(rows, [("hip bone mineral density", "Other measurement", "http://www.ebi.ac.uk/efo/EFO_0001444")])
+        self.assertEqual(self.query(ETL_DSN, f"SELECT count(*) FROM {SCHEMA}.trait_mapping"), [(33,)])
+
+    def test_invalid_trait_uri_token_is_dropped_and_row_flagged(self) -> None:
+        snapshot = make_snapshot(self.tmp, "r2000-01-02", association_with_invalid_trait_uri, ASSOCIATIONS_FILE)
+        self.assertEqual(self.load(snapshot), 0)
+        rows = self.query(
+            ETL_DSN,
+            "SELECT a.trait_uri_invalid, array_agg(t.efo_uri) FROM gwas_r2000_01_02.association a "
+            "JOIN gwas_r2000_01_02.association_trait t USING (association_id) WHERE a.snps = 'rs2469956' "
+            "GROUP BY a.trait_uri_invalid",
+        )
+        self.assertEqual(rows, [(True, ["http://www.ebi.ac.uk/efo/EFO_0007702"])])
+        self.assertEqual(
+            self.query(ETL_DSN, "SELECT count(*) FROM gwas_r2000_01_02.association WHERE trait_uri_invalid"), [(1,)]
+        )
+        (report,) = self.query(
+            ETL_DSN, "SELECT load_report -> 'published_associations' FROM meta.release WHERE release_id = 'r2000-01-02'"
+        )[0]
+        self.assertEqual((report["trait_uri_invalid_rows"], report["rejected_rows"]), (1, 0))
+
+    def test_invalid_study_trait_uri_token_is_dropped_and_row_flagged(self) -> None:
+        snapshot = make_snapshot(self.tmp, "r2000-01-02", study_with_empty_trait_uri_token)
+        self.assertEqual(self.load(snapshot), 0)
+        rows = self.query(
+            ETL_DSN,
+            "SELECT s.study_accession, count(t.efo_uri) FROM gwas_r2000_01_02.study s "
+            "JOIN gwas_r2000_01_02.study_trait t USING (study_accession) WHERE s.trait_uri_invalid "
+            "GROUP BY s.study_accession",
+        )
+        self.assertEqual(rows, [("GCST006430", 2)])
+        (report,) = self.query(
+            ETL_DSN, "SELECT load_report -> 'published_studies' FROM meta.release WHERE release_id = 'r2000-01-02'"
+        )[0]
+        self.assertEqual((report["trait_uri_invalid_rows"], report["rejected_rows"]), (1, 0))
+
+    def test_duplicate_disease_trait_and_efo_uri_fails_load(self) -> None:
+        snapshot = make_snapshot(self.tmp, "r2000-01-02", lambda header, rows: rows.append(rows[0]), TRAIT_MAPPINGS_FILE)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            self.assertNotEqual(self.load(snapshot), 0)
+        self.assertIn(f"{TRAIT_MAPPINGS_FILE}:35: duplicate Disease trait, EFO URI", stderr.getvalue())
+        self.assertEqual(self.query(ETL_DSN, "SELECT count(*) FROM meta.release"), [(0,)])
 
 
 if __name__ == "__main__":

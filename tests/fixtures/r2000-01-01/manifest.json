@@ -70,6 +70,28 @@
       "source_url": "https://www.ebi.ac.uk/gwas/api/search/downloads/ancestries/v1.0.3.1"
     },
     {
+      "byte_size": 5248,
+      "column_count": 5,
+      "data_row_count": 33,
+      "downloaded_at": "2026-09-03T01:19:03Z",
+      "duplicate_header_names": [],
+      "filename": "gwas_catalog_trait-mappings_r2000-01-01.tsv",
+      "final_line_has_newline": true,
+      "format_version": null,
+      "header_sha256": "b850b021b32e944ecb9c233257cb8411534e0ebbfe6f2a9f6e2140fabe33b189",
+      "http_response_headers": {
+        "content-type": "text/tsv"
+      },
+      "http_status": 200,
+      "load_policy": "load_to_curated",
+      "malformed_examples": [],
+      "malformed_row_count": 0,
+      "requested_url": "https://www.ebi.ac.uk/gwas/api/search/downloads/trait_mappings",
+      "role": "trait_mappings",
+      "sha256": "afbe91837727712dad94fca3228c4617a5ae7b3d7058036f676f5e74a0663d0f",
+      "source_url": "https://www.ebi.ac.uk/gwas/api/search/downloads/trait_mappings"
+    },
+    {
       "byte_size": 1519,
       "column_count": 24,
       "data_row_count": 2,
@@ -117,6 +139,7 @@
     "published_ancestries": "load_to_curated",
     "published_associations": "load_to_curated",
     "published_studies": "load_to_curated",
+    "trait_mappings": "load_to_curated",
     "unpublished_studies": "raw_only"
   },
   "snapshot_content_sha256": null,
@@ -125,7 +148,7 @@
     "errors": [],
     "status": "passed",
     "warnings": [
-      "test fixture: studies, associations and ancestries; association STUDY ACCESSION rewritten to fixture studies; GCST010197 has no ancestry rows; unpublished studies are raw_only and never loaded"
+      "test fixture: studies, associations and ancestries; association STUDY ACCESSION rewritten to fixture studies; GCST010197 has no ancestry rows; trait mappings are one real row per fixture URI found in r2026-08-22 (5 MONDO URIs have none); unpublished studies are raw_only and never loaded"
     ]
   }
 }
