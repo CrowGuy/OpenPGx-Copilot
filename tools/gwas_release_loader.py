@@ -533,8 +533,9 @@ def promote(args: argparse.Namespace) -> str:
                     sql.Identifier(table), sql.Identifier(schema)
                 )
             )
-        # Ranked by release date among all Releases, including those whose schema is already gone.
+        # Ranked by release date (r<YYYY-MM-DD> sorts as text) among all Releases, including already dropped ones.
         # ponytail: only retired schemas are dropped, so a never-promoted candidate is kept until someone decides.
+        existing = {name for (name,) in conn.execute("SELECT nspname FROM pg_namespace").fetchall()}
         dropped = [
             schema_for(release_id)
             for (release_id,) in conn.execute(
@@ -542,10 +543,12 @@ def promote(args: argparse.Namespace) -> str:
                 "(SELECT release_id FROM meta.release ORDER BY release_id DESC LIMIT %s)",
                 (KEPT_RELEASES,),
             ).fetchall()
-            if conn.execute("SELECT to_regnamespace(%s)", (schema_for(release_id),)).fetchone() != (None,)
+            if schema_for(release_id) in existing
         ]
-        for old in dropped:
-            conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(old)))
+        # ponytail: CASCADE is safe while only etl_writer creates objects and nothing outside a retired schema depends
+        # on it. Drop its tables with RESTRICT first once a Release Pin can build objects on a Release schema.
+        for dropped_schema in dropped:
+            conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(dropped_schema)))
     log(f"Promoted {args.release} to Active Release by {args.approved_by}; dropped schemas: {dropped}")
     return schema
 
