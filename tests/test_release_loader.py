@@ -562,6 +562,24 @@ class ReleaseLoaderTest(unittest.TestCase):
         self.assertIn(f"{RELEASE} has no recorded RawSnapshot manifest", stderr.getvalue())
         self.assertFalse(self.schema_exists())
 
+    def test_rebuild_differing_from_the_load_report_rolls_back(self) -> None:
+        self.assertEqual(self.load(), 0)
+        self.assertEqual(self.promote(), 0)
+        self.drop_schema()
+        # As if the loader had curated the same inputs differently when the Release was loaded.
+        with psycopg.connect(ETL_DSN) as conn:
+            conn.execute(
+                "UPDATE meta.release SET load_report = jsonb_set(load_report, '{published_studies,rejected_rows}', '1')"
+            )
+        meta = self.query(ETL_DSN, "SELECT * FROM meta.release")
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            self.assertEqual(self.rebuild(), 2)
+        self.assertIn("published_studies rejected_rows: expected 1, rebuilt 0", stderr.getvalue())
+        self.assertFalse(self.schema_exists())
+        self.assertEqual(self.query(ETL_DSN, "SELECT to_regclass('gwas.study')"), [(None,)])
+        self.assertEqual(self.query(ETL_DSN, "SELECT * FROM meta.release"), meta)
+
     def test_rebuilt_release_beyond_the_kept_places_is_dropped_on_next_promote(self) -> None:
         self.assertEqual(self.load(), 0)
         self.assertEqual(self.promote(), 0)

@@ -588,17 +588,17 @@ def rebuild(args: argparse.Namespace) -> str:
     # One transaction; every check below runs before anything is written, and meta.release is never changed.
     with psycopg.connect(args.dsn) as conn:
         row = conn.execute(
-            "SELECT status, manifest_sha256, curation_contract_version, curation_contract_sha256 "
+            "SELECT status, manifest_sha256, curation_contract_version, curation_contract_sha256, load_report "
             "FROM meta.release WHERE release_id = %s FOR UPDATE",
             (args.release,),
         ).fetchone()
         # A candidate never lost its schema (promote does not drop candidates); reload a failed one instead.
         if row is None or row[0] not in ("active", "retired"):
             raise LoaderError(f"{args.release} is not an active or retired Release in meta.release")
-        status, recorded_manifest_sha, recorded_version, recorded_contract_sha = row
+        status, recorded_manifest_sha, recorded_version, recorded_contract_sha, recorded_report = row
         if None in row:
             raise LoaderError(
-                f"{args.release} has no recorded RawSnapshot manifest or CurationContract in meta.release "
+                f"{args.release} has no recorded RawSnapshot manifest, CurationContract or load report in meta.release "
                 "(loaded before #6), so its inputs cannot be verified for a rebuild"
             )
         for name, actual, expected in (
@@ -612,7 +612,18 @@ def rebuild(args: argparse.Namespace) -> str:
                 )
         if conn.execute("SELECT to_regnamespace(%s)", (schema,)).fetchone() != (None,):
             raise LoaderError(f"{schema} already exists; rebuild only restores a dropped Release schema")
-        build_release_schema(conn, schema, args.snapshot_dir, files, datasets)
+        report = build_release_schema(conn, schema, args.snapshot_dir, files, datasets)
+        # The same inputs curate differently if the loader changed since the Release was loaded; roll back then.
+        mismatches = [
+            f"{role} {key}: expected {expected}, rebuilt {counts[key]}"
+            for role, counts in report.items()
+            for key in ("source_rows", "loaded_rows", "rejected_rows")
+            if (expected := recorded_report.get(role, {}).get(key)) != counts[key]
+        ]
+        if mismatches:
+            raise LoaderError(
+                f"Rebuilt {args.release} does not match its load report in meta.release: {'; '.join(mismatches)}"
+            )
         if status == "active":
             point_gwas_views(conn, schema)
     log(f"Rebuilt {args.release} ({status}) into {schema}")

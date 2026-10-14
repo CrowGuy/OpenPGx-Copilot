@@ -46,6 +46,7 @@ python tools/gwas_release_loader.py rebuild --release r2026-08-22 \
 
 - 只接受 `meta` 中狀態是 `active` 或 `retired`、而且 schema 不存在的 Release。
 - RawSnapshot manifest 的 sha256 與 CurationContract 的版本、sha256 必須和 `meta` 的紀錄相同，否則在寫入任何資料前失敗。CurationContract 改過的話，從 git 歷史取出當時的版本。
+- 重建後比對各資料集的列數與 Rejected Row 數量和 `meta` 的 load report；不一致（例如 loader 在 load 之後改版）就 rollback 並列出差異。
 - 在單一 transaction 內完成；`meta` 的狀態與核准紀錄不變。重建的是 Active Release 時，`gwas` 的 view 也一起建回來。
 - 重建的 schema 照常適用上面的保留規則：最近 Promote 過的 3 個以外的 `retired` Release，重建後只保留到下一次 Promote（`meta` 紀錄不變，需要時再重建）。不要拿它當長期依賴，例如 Release Pin。
 
