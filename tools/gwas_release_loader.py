@@ -595,11 +595,16 @@ def rebuild(args: argparse.Namespace) -> str:
         # A candidate never lost its schema (promote does not drop candidates); reload a failed one instead.
         if row is None or row[0] not in ("active", "retired"):
             raise LoaderError(f"{args.release} is not an active or retired Release in meta.release")
-        status, *recorded = row
-        for name, actual, expected in zip(
-            ("RawSnapshot manifest sha256", "CurationContract version", "CurationContract sha256"),
-            (manifest_sha, contract["version"], contract_sha),
-            recorded,
+        status, recorded_manifest_sha, recorded_version, recorded_contract_sha = row
+        if None in row:
+            raise LoaderError(
+                f"{args.release} has no recorded RawSnapshot manifest or CurationContract in meta.release "
+                "(loaded before #6), so its inputs cannot be verified for a rebuild"
+            )
+        for name, actual, expected in (
+            ("RawSnapshot manifest sha256", manifest_sha, recorded_manifest_sha),
+            ("CurationContract version", contract["version"], recorded_version),
+            ("CurationContract sha256", contract_sha, recorded_contract_sha),
         ):
             if actual != expected:
                 raise LoaderError(
@@ -610,8 +615,6 @@ def rebuild(args: argparse.Namespace) -> str:
         build_release_schema(conn, schema, args.snapshot_dir, files, datasets)
         if status == "active":
             point_gwas_views(conn, schema)
-    # ponytail: a rebuilt retired Release keeps its old approved_at, so it is dropped again on the next promote if it
-    # is beyond the KEPT_RELEASES places (#14); rebuild it again when needed.
     log(f"Rebuilt {args.release} ({status}) into {schema}")
     return schema
 

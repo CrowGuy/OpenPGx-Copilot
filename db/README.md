@@ -36,7 +36,7 @@ psql "host=127.0.0.1 dbname=openpgx user=analyst_ro password=analyst_ro" \
 
 ## Rebuild：從 RawSnapshot 重建 Release schema
 
-`meta` 有紀錄、schema 卻不在的 Release（還原 `meta` 之後，或 Promote 刪掉的舊 Release）用 `rebuild` 重建，不要刪掉 `meta` 紀錄再 load：核准紀錄會因此遺失（ADR-0008）。
+`meta` 有紀錄、schema 卻不在的 Release（還原 `meta` 之後，或 Promote 刪掉 schema 的舊 Release）用 `rebuild` 重建，不要刪掉 `meta` 紀錄再 load：核准紀錄會因此遺失（ADR-0008）。
 
 ```bash
 python tools/gwas_release_loader.py rebuild --release r2026-08-22 \

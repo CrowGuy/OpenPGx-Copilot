@@ -549,6 +549,19 @@ class ReleaseLoaderTest(unittest.TestCase):
                 self.assertFalse(self.schema_exists())
                 self.assertEqual(self.query(ETL_DSN, "SELECT * FROM meta.release"), meta)
 
+    def test_rebuild_fails_without_recorded_inputs(self) -> None:
+        self.assertEqual(self.load(), 0)
+        self.assertEqual(self.promote(), 0)
+        self.drop_schema()
+        # A Release loaded before #6 has no recorded RawSnapshot manifest or CurationContract.
+        with psycopg.connect(ETL_DSN) as conn:
+            conn.execute("UPDATE meta.release SET manifest_sha256 = NULL")
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            self.assertEqual(self.rebuild(), 2)
+        self.assertIn(f"{RELEASE} has no recorded RawSnapshot manifest", stderr.getvalue())
+        self.assertFalse(self.schema_exists())
+
     def test_rebuilt_release_beyond_the_kept_places_is_dropped_on_next_promote(self) -> None:
         self.assertEqual(self.load(), 0)
         self.assertEqual(self.promote(), 0)
