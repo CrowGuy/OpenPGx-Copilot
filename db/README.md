@@ -25,6 +25,8 @@ python tools/gwas_release_loader.py load \
 python tools/gwas_release_loader.py promote --release r2026-08-22 --approved-by <你的名字>
 ```
 
+同一個 Release 不能再 load 一次。Promote 只接受 `candidate`，並在同一個 transaction 內刪除最近 3 個 Release 以外、狀態為 `retired` 的 schema；`meta.release` 的紀錄保留。
+
 用團隊成員的身分查詢：
 
 ```bash

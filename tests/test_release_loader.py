@@ -375,6 +375,57 @@ class ReleaseLoaderTest(unittest.TestCase):
         self.assertEqual(self.promote(), 0)
         self.assertNotEqual(self.promote(), 0)
         self.assertEqual(self.query(ETL_DSN, "SELECT status FROM meta.release"), [("active",)])
+        self.assertEqual(self.load(make_snapshot(self.tmp, "r2000-01-02", lambda header, rows: None)), 0)
+        self.assertEqual(self.promote("r2000-01-02"), 0)
+        self.assertNotEqual(self.promote(), 0)
+        self.assertEqual(
+            self.query(ETL_DSN, "SELECT release_id, status FROM meta.release ORDER BY release_id"),
+            [(RELEASE, "retired"), ("r2000-01-02", "active")],
+        )
+
+    def test_loading_an_existing_release_fails_and_keeps_it(self) -> None:
+        self.assertEqual(self.load(), 0)
+        self.assertEqual(self.promote(), 0)
+        before = self.query(ETL_DSN, "SELECT * FROM meta.release")
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            self.assertNotEqual(self.load(), 0)
+        self.assertIn(f"Release {RELEASE} already exists", stderr.getvalue())
+        self.assertEqual(self.query(ETL_DSN, "SELECT * FROM meta.release"), before)
+        self.assertEqual(self.query(ANALYST_DSN, "SELECT count(*) FROM gwas.study"), [(27,)])
+
+    def test_promote_keeps_the_three_most_recent_release_schemas(self) -> None:
+        releases = [RELEASE, "r2000-01-02", "r2000-01-03", "r2000-01-04"]
+        for release in releases:
+            snapshot = SNAPSHOT if release == RELEASE else make_snapshot(self.tmp, release, lambda header, rows: None)
+            self.assertEqual(self.load(snapshot), 0)
+            self.assertEqual(self.promote(release), 0)
+        schemas = self.query(ETL_DSN, "SELECT nspname FROM pg_namespace WHERE nspname LIKE %s ORDER BY 1", ("gwas\\_r%",))
+        self.assertEqual(schemas, [("gwas_r2000_01_02",), ("gwas_r2000_01_03",), ("gwas_r2000_01_04",)])
+        meta = self.query(
+            ANALYST_DSN,
+            "SELECT release_id, status, approved_by, approved_at IS NOT NULL FROM meta.release ORDER BY release_id",
+        )
+        self.assertEqual(meta, [(r, "retired", "tester", True) for r in releases[:3]] + [(releases[3], "active", "tester", True)])
+        self.assertEqual(self.query(ANALYST_DSN, "SELECT count(*) FROM gwas.study"), [(27,)])
+
+    def test_failed_promote_changes_nothing(self) -> None:
+        self.assertEqual(self.load(), 0)
+        self.assertEqual(self.promote(), 0)
+        self.assertEqual(self.load(make_snapshot(self.tmp, "r2000-01-02", lambda header, rows: None)), 0)
+        # A table in gwas named like a candidate table makes the view swap fail after the status updates ran.
+        with psycopg.connect(ETL_DSN) as conn:
+            conn.execute("CREATE TABLE gwas_r2000_01_02.blocker (x int)")
+            conn.execute("CREATE TABLE gwas.blocker (x int)")
+        self.addCleanup(lambda: psycopg.connect(ETL_DSN, autocommit=True).execute("DROP TABLE gwas.blocker").connection.close())
+        before = self.query(ETL_DSN, "SELECT * FROM meta.release ORDER BY release_id")
+        self.assertNotEqual(self.promote("r2000-01-02"), 0)
+        self.assertEqual(self.query(ETL_DSN, "SELECT * FROM meta.release ORDER BY release_id"), before)
+        self.assertEqual(self.query(ANALYST_DSN, "SELECT count(*) FROM gwas.study"), [(27,)])
+        rows = self.query(
+            ETL_DSN, "SELECT view_definition LIKE %s FROM information_schema.views WHERE table_name = 'study'", (f"%{SCHEMA}%",)
+        )
+        self.assertEqual(rows, [(True,)])
 
     def test_analyst_ro_reads_but_cannot_write(self) -> None:
         self.assertEqual(self.load(), 0)

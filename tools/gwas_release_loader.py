@@ -2,7 +2,8 @@
 """Load a verified RawSnapshot into an immutable Release schema and promote it.
 
 load:    RawSnapshot + CurationContract -> gwas_r<YYYY_MM_DD> schema, Release Status `candidate`.
-promote: Candidate -> Active Release; `gwas` views point at it, the previous Active Release is `retired`.
+promote: Candidate -> Active Release; `gwas` views point at it, the previous Active Release is `retired`, and retired
+         Release schemas beyond the KEPT_RELEASES most recent are dropped. meta keeps every Release's row (ADR-0005).
 
 Connection: --dsn, or the standard libpq PG* environment variables / ~/.pgpass when omitted.
 Rows violating the CurationContract become Rejected Rows; over the Rejection Threshold the whole load fails (ADR-0007).
@@ -41,6 +42,7 @@ ISO_DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 DECIMAL_RE = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$")
 P_VALUE_RE = re.compile(r"^(\d+(?:\.\d+)?)E-(\d+)$")
 INT4_MIN, INT4_MAX = -(2**31), 2**31 - 1
+KEPT_RELEASES = 3
 # The curated_type values parse_value handles; checked up front so an all-empty column cannot hide an unknown type.
 CURATED_TYPES = {"text", "integer", "decimal", "flag_01", "p_value", "date", "yes_no"}
 # Loaded in this order so foreign_key rules see the datasets they reference.
@@ -475,17 +477,22 @@ def load(args: argparse.Namespace) -> str:
     # One transaction: `loading` is visible only inside it; any failure rolls back the schema and meta row.
     # The DDL PRIMARY KEY / REFERENCES constraints stay as a safety net behind the loader's dataset rules.
     with psycopg.connect(args.dsn) as conn:
-        conn.execute(
-            "INSERT INTO meta.release (release_id, status, manifest_sha256, curation_contract_version, "
-            "curation_contract_sha256, genome_build) VALUES (%s, 'loading', %s, %s, %s, %s)",
-            (
-                release_id,
-                manifest_sha,
-                contract["version"],
-                hashlib.sha256(contract_bytes).hexdigest(),
-                contract["genome_build"],
-            ),
-        )
+        try:
+            conn.execute(
+                "INSERT INTO meta.release (release_id, status, manifest_sha256, curation_contract_version, "
+                "curation_contract_sha256, genome_build) VALUES (%s, 'loading', %s, %s, %s, %s)",
+                (
+                    release_id,
+                    manifest_sha,
+                    contract["version"],
+                    hashlib.sha256(contract_bytes).hexdigest(),
+                    contract["genome_build"],
+                ),
+            )
+        except psycopg.errors.UniqueViolation:
+            raise LoaderError(
+                f"Release {release_id} already exists in meta.release; Releases are never reloaded"
+            ) from None
         conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
         conn.execute(sql.SQL("SET LOCAL search_path TO {}").format(sql.Identifier(schema)))
         conn.execute(RELEASE_SCHEMA_DDL.read_text(encoding="utf-8"))
@@ -526,7 +533,20 @@ def promote(args: argparse.Namespace) -> str:
                     sql.Identifier(table), sql.Identifier(schema)
                 )
             )
-    log(f"Promoted {args.release} to Active Release by {args.approved_by}")
+        # Ranked by release date among all Releases, including those whose schema is already gone.
+        # ponytail: only retired schemas are dropped, so a never-promoted candidate is kept until someone decides.
+        dropped = [
+            schema_for(release_id)
+            for (release_id,) in conn.execute(
+                "SELECT release_id FROM meta.release WHERE status = 'retired' AND release_id NOT IN "
+                "(SELECT release_id FROM meta.release ORDER BY release_id DESC LIMIT %s)",
+                (KEPT_RELEASES,),
+            ).fetchall()
+            if conn.execute("SELECT to_regnamespace(%s)", (schema_for(release_id),)).fetchone() != (None,)
+        ]
+        for old in dropped:
+            conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(old)))
+    log(f"Promoted {args.release} to Active Release by {args.approved_by}; dropped schemas: {dropped}")
     return schema
 
 
