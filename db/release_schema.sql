@@ -28,3 +28,13 @@ CREATE TABLE study (
     summary_stats_location text,
     gxe boolean
 );
+
+-- Rejected Rows (ADR-0007): one row per Required Field violation of a source row kept out of the Curated Layer.
+CREATE TABLE rejected_row (
+    source_file text NOT NULL,
+    source_line integer NOT NULL,
+    source_column text NOT NULL,
+    reason text NOT NULL,
+    value text NOT NULL,
+    PRIMARY KEY (source_file, source_line, source_column)
+);
