@@ -103,7 +103,9 @@ def load(args: argparse.Namespace) -> str:
     nulled: collections.Counter[str] = collections.Counter()
     source_rows = rejected_rows = 0
     # One transaction: `loading` is visible only inside it; any failure rolls back the schema and meta row.
-    # Dataset rules `unique` (on_violation fail_load) are enforced by the PRIMARY KEY/UNIQUE constraints in the DDL.
+    # ponytail: dataset rule `unique` (fail_load) is enforced only by the DDL PRIMARY KEY, so a rule missing
+    # from the DDL is silently skipped. #7 dispatches dataset_rules for foreign_key (reject_row): handle `unique`
+    # there too, reporting the source line, and keep the PRIMARY KEY as a safety net.
     with psycopg.connect(args.dsn) as conn:
         conn.execute("INSERT INTO meta.release (release_id, status) VALUES (%s, 'loading')", (release_id,))
         conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
