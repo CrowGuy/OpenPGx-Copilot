@@ -3,7 +3,7 @@
 適用對象：第一次用 Docker 架 PostgreSQL 的團隊成員。
 適用範圍：GWAS Data Platform 的 Curated Layer 資料庫（ADR-0004、ADR-0006、ADR-0008）。
 
-> 本文的設定檔是**教學範例**。實際設定由 #4（本機開發）與 #11（正式環境）實作進 repo；兩者有差異時以 repo 為準，並回頭更新本文。
+> 本文的設定檔是**教學範例**。角色、授權與 `meta`／`gwas` schema 一律以 repo 的 `db/migrations/` 為準，本機開發（`db/`，#4）與伺服器（#11）共用；兩者有差異時以 repo 為準，並回頭更新本文。
 
 ---
 
@@ -64,8 +64,6 @@ sudo usermod -aG docker "$USER"
 │   ├── postgres_superuser
 │   ├── etl_writer
 │   └── analyst_ro
-├── initdb/               # 第一次建立資料庫時執行的腳本
-│   └── 01-roles.sh
 ├── conf/
 │   └── pg_hba.conf       # 誰可以從哪裡、用什麼方式連線
 ├── tls/                  # TLS 憑證與私鑰
@@ -76,7 +74,7 @@ sudo usermod -aG docker "$USER"
 ```
 
 ```bash
-sudo mkdir -p /srv/openpgx/{secrets,initdb,conf,tls,raw,backups}
+sudo mkdir -p /srv/openpgx/{secrets,conf,tls,raw,backups}
 sudo chown -R "$USER": /srv/openpgx
 chmod 700 /srv/openpgx/secrets
 ```
@@ -101,54 +99,34 @@ chmod 600 *
 | `etl_writer` | 只有 loader | 建立 Release schema、寫入 |
 | `analyst_ro` | 團隊成員 | 只能讀 `gwas`、`meta` 與 Release schema |
 
-密碼透過 Docker secrets 掛進 container，**不要寫在 `compose.yaml` 或環境變數裡**，因為那些會出現在 `docker inspect` 的輸出和 shell history 中。
+密碼只存在這些檔案裡：superuser 的密碼透過 Docker secrets 掛進 container，角色密碼用第 5 節的指令設定。**不要寫在 `compose.yaml` 或環境變數裡**，因為那些會出現在 `docker inspect` 的輸出和 shell history 中。
 
 ---
 
-## 5. 初始化角色
+## 5. 角色、授權與密碼
 
-`initdb/` 裡的腳本**只在 volume 是空的時候執行一次**（第一次啟動）。之後再改這些腳本不會生效，要改角色就直接下 SQL。
+角色本身、資料庫與 schema 的授權、`meta`／`gwas` schema，全部由 repo 的 `db/migrations/` 建立（第 9.1 節套用），本機開發與伺服器共用同一份。本節只處理伺服器上的**密碼**：migration 建立的角色沒有密碼，無法登入，要用下面的指令設定。
 
-`/srv/openpgx/initdb/01-roles.sh`：
+### 設定或重設角色密碼
 
-```bash
-#!/bin/bash
-set -euo pipefail
-etl_pw=$(cat /run/secrets/etl_writer)
-ro_pw=$(cat /run/secrets/analyst_ro)
-# 密碼由第 4 節的 openssl rand -base64 產生，不含單引號，可以直接放進 '...'。
-# 不使用 psql 的 -v 變數替換（:'var'）：實測時沒有被替換，密碼因此沒有設定成功。
-psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<SQL
-CREATE ROLE etl_writer LOGIN PASSWORD '${etl_pw}';
-CREATE ROLE analyst_ro LOGIN PASSWORD '${ro_pw}';
-REVOKE ALL ON DATABASE openpgx FROM PUBLIC;
-GRANT CONNECT ON DATABASE openpgx TO etl_writer, analyst_ro;
-GRANT CREATE ON DATABASE openpgx TO etl_writer;   -- 讓 loader 能建立 schema
-REVOKE CREATE ON SCHEMA public FROM PUBLIC;
-SQL
-```
+第一次套用 migration 之後，以及之後要換密碼時，在 `/srv/openpgx` 目錄下執行：
 
 ```bash
-chmod 755 /srv/openpgx/initdb/01-roles.sh
-```
-
-`meta`、`gwas` 這些 schema 與讀取授權由 repo 中的 migration 建立（#4、#10），不放在這裡。
-
-### 重設角色密碼
-
-初始化腳本只會執行一次。之後要修改密碼（或發現初始化時密碼沒有設定成功），在 `/srv/openpgx` 目錄下執行：
-
-```bash
-pw=$(sudo cat /srv/openpgx/secrets/analyst_ro)          # 換成要重設的角色：etl_writer、analyst_ro
-printf "ALTER ROLE analyst_ro PASSWORD '%s';\n" "$pw" \
-  | sudo docker compose exec -T -u postgres db psql -d openpgx -v ON_ERROR_STOP=1
+for r in etl_writer analyst_ro; do
+  pw=$(sudo cat "/srv/openpgx/secrets/$r")
+  printf "ALTER ROLE %s PASSWORD '%s';\n" "$r" "$pw" \
+    | sudo docker compose exec -T -u postgres db psql -d openpgx -v ON_ERROR_STOP=1
+done
 unset pw
 ```
 
-- 看到 `ALTER ROLE` 就代表成功。
-- `printf` 是 shell 內建指令，密碼不會出現在 `ps` 的行程列表中，而是透過管線送給 psql。
+- 每個角色看到一次 `ALTER ROLE` 就代表成功。
+- 密碼由第 4 節的 `openssl rand -base64` 產生，不含單引號，可以直接放進 `'...'`。
+- `printf` 是 shell 內建指令，密碼不會出現在 `ps` 的行程列表中，而是透過管線送給 psql。不要改用 psql 的 `-v` 變數替換（`:'var'`）：實測時沒有被替換，密碼因此沒有設定成功。
 - 輸入來自管線，所以 `exec` 一定要加 `-T`；沒有加會出現 `the input device is not a TTY`。
 - superuser `postgres` 在伺服器上用 peer 登入（第 7 節），平常不需要密碼。如果要重設它的密碼，把角色換成 `postgres`、密碼檔換成 `secrets/postgres_superuser`。
+
+> 舊版本文用 `initdb/01-roles.sh` 在第一次啟動時建立角色。已經這樣部署的伺服器不需要重建：migration 遇到已存在的角色會略過，授權重複套用也沒有副作用。`initdb/` 目錄與 compose 裡的掛載可以留著，不影響運作。
 
 ---
 
@@ -215,7 +193,7 @@ services:
       POSTGRES_DB: openpgx
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_superuser
-    secrets: [postgres_superuser, etl_writer, analyst_ro]
+    secrets: [postgres_superuser]   # 角色密碼不掛進 container，見第 5 節
     command:
       - postgres
       - -c
@@ -230,7 +208,6 @@ services:
       - password_encryption=scram-sha-256
     volumes:
       - pgdata:/var/lib/postgresql   # PostgreSQL 18 起的官方 image 掛在這一層
-      - ./initdb:/docker-entrypoint-initdb.d:ro
       - ./conf:/etc/postgresql/conf:ro   # 掛整個目錄，不要只掛單一檔案（見下方說明）
       - ./tls:/etc/postgresql/tls:ro
     ports:
@@ -252,8 +229,6 @@ networks:
 
 secrets:
   postgres_superuser: { file: ./secrets/postgres_superuser }
-  etl_writer:         { file: ./secrets/etl_writer }
-  analyst_ro:         { file: ./secrets/analyst_ro }
 ```
 
 > ⚠️ **Docker 會繞過 ufw 防火牆。** `ports: "5432:5432"` 等於把資料庫開放給所有網路介面，即使 ufw 設定了拒絕也一樣。所以一定要在 `ports` 裡寫明內網 IP。
@@ -273,12 +248,27 @@ docker compose ps             # STATUS 應該在幾秒後變成 healthy
 docker compose logs -f db     # 看啟動訊息，Ctrl-C 離開
 ```
 
-第一次啟動時，log 裡應該看到 `running /docker-entrypoint-initdb.d/01-roles.sh`。
+### 9.1 套用 migration
+
+第一次啟動之後，以及每次 `git pull` 帶進新的 migration 檔之後，在 `/srv/openpgx` 目錄下依編號順序全部套用一次。每個 migration 都可以重複執行，已經套用過的不會出錯：
+
+```bash
+REPO=/path/to/OpenPGx-Copilot          # 換成伺服器上 repo 的路徑
+for f in "$REPO"/db/migrations/*.sql; do
+  echo "== $f"
+  sudo docker compose exec -T -u postgres db psql -d openpgx -v ON_ERROR_STOP=1 -q < "$f" || break
+done
+```
+
+第一次套用之後，接著照第 5 節設定角色密碼。
+
+### 9.2 檢查
 
 在伺服器上用 superuser 檢查（`-u postgres` 走第 7 節的 peer 規則，不需要密碼）：
 
 ```bash
-docker compose exec -u postgres db psql -d openpgx -c '\du'   # 列出角色
+docker compose exec -u postgres db psql -d openpgx -c '\du'   # 列出角色：etl_writer、analyst_ro
+docker compose exec -u postgres db psql -d openpgx -c '\dn'   # 列出 schema：gwas、meta
 docker compose exec -u postgres db psql -d openpgx -c 'SHOW ssl;'
 ```
 
@@ -491,6 +481,12 @@ docker compose exec -T -u postgres db pg_restore -d openpgx --clean --if-exists 
   < backups/meta-YYYYMMDD-HHMMSS.dump
 ```
 
+還原到**全新的空資料庫**（換機器、major 升級、volume 遺失）時，順序是：
+
+1. 先照第 9.1 節套用 migration，再照第 5 節設定密碼。備份檔只有 `meta`，不含角色、預設授權與 `gwas` schema。
+2. 再執行上面的 `pg_restore`。
+3. 這時 `meta` 的紀錄完整，但 Release schema 不在，`gwas` 也沒有 view，團隊查不到資料。依 ETL playbook 從 RawSnapshot 重建 Release（#14）。不要刪掉 `meta` 紀錄再重新 load：核准紀錄會因此遺失（ADR-0008）。
+
 **還原從來沒有演練過的備份，等於沒有備份。** 每次改了 `meta` 的結構之後，至少演練一次還原。
 
 ---
@@ -505,7 +501,7 @@ docker compose exec -T -u postgres db pg_restore -d openpgx --clean --if-exists 
 | 看資源用量 | `docker stats` |
 | 套用同一個 major 版本的安全更新（例如 18.1 → 18.2） | `docker compose pull && docker compose up -d` |
 
-**Major 版本升級**（例如 18 → 19）**不能只改 image tag**，因為資料檔格式不相容。正確做法：用 `pg_dumpall` 匯出 → 用新版本建立新的 volume → 匯入。對本專案來說更簡單的做法是：備份 `meta` → 用新版本建一個空的資料庫 → 還原 `meta` → 從 RawSnapshot 重新 load 需要的 Release。
+**Major 版本升級**（例如 18 → 19）**不能只改 image tag**，因為資料檔格式不相容。正確做法：用 `pg_dumpall` 匯出 → 用新版本建立新的 volume → 匯入。對本專案來說更簡單的做法是：備份 `meta` → 用新版本建一個空的資料庫 → 依第 12 節「還原到全新的空資料庫」的順序套用 migration、設定密碼、還原 `meta` → 從 RawSnapshot 重建 Release（#14）。
 
 > ⚠️ `docker compose down -v` 會**連 volume 一起刪除**，也就是刪掉整個資料庫。除非確定要從頭重建，否則不要加 `-v`。
 
@@ -513,7 +509,7 @@ docker compose exec -T -u postgres db pg_restore -d openpgx --clean --if-exists 
 
 ## 14. 本機開發
 
-開發者在自己的電腦上，可以用簡化版的設定：不需要 TLS，密碼寫在本機檔案，port 只綁 `127.0.0.1`。實際的開發用 Compose 設定與測試資料庫由 #4 放進 repo，照該 ticket 的 README 操作即可。
+開發者在自己的電腦上，可以用簡化版的設定：不需要 TLS，port 只綁 `127.0.0.1`。開發用的密碼直接寫在 `db/compose.yaml` 與 `db/dev-setup.sh`，這是第 4 節規則的刻意例外：只有本機連得到，裡面也沒有需要保護的資料。角色、授權與 schema 和伺服器一樣來自 `db/migrations/`。實際的開發用 Compose 設定與測試資料庫在 repo 的 `db/`，照 `db/README.md` 操作即可。
 
 ---
 
@@ -526,11 +522,11 @@ docker compose exec -T -u postgres db pg_restore -d openpgx --clean --if-exists 
 | `no pg_hba.conf entry for host` | client 的 IP 不在 `hostssl` 那一行的網段，或者沒有用 `sslmode=require`。log 裡 `host "..."` 就是 PostgreSQL 看到的 IP（第 11.1 節） |
 | loader 在伺服器上連不進去，但其他機器可以 | 伺服器自己連自己時，來源是 Docker 閘道（例如 `172.30.0.1`），不是 `10.0.201.134`（第 11.2 節） |
 | `You must install at least one postgresql-client-<version> package` | client 端只裝了 `pg_wrapper`，沒有真正的 `psql`。照第 10.1 節安裝 client |
-| 角色登入時 `password authentication failed`，但密碼確定是密碼檔的內容 | 初始化時密碼可能沒有設定成功。照第 5 節「重設角色密碼」重設 |
+| 角色登入時 `password authentication failed`，但密碼確定是密碼檔的內容 | 角色的密碼還沒設定（migration 建立的角色沒有密碼），或密碼檔後來改過。照第 5 節設定 |
 | `the input device is not a TTY` | 用 heredoc 或管線把輸入送給 `docker compose exec` 時，沒有加 `-T` |
-| `syntax error at or near ":"`，SQL 裡出現 `:'pw'` 這類字樣 | psql 的 `-v` 變數沒有被替換。改用第 5 節「重設角色密碼」的 `printf` 寫法 |
+| `syntax error at or near ":"`，SQL 裡出現 `:'pw'` 這類字樣 | psql 的 `-v` 變數沒有被替換。改用第 5 節的 `printf` 寫法 |
 | `docker compose exec` 進去執行 psql 時被問密碼 | 沒有加 `-u postgres`；或第 7 節的 `local all postgres peer` 沒有生效。先用 `docker compose exec db cat /etc/postgresql/conf/pg_hba.conf` 確認 container 看到的內容 |
 | 改了 `pg_hba.conf` 卻沒有效果 | 用 `docker compose exec db cat /etc/postgresql/conf/pg_hba.conf` 確認 container 看到的是新內容；如果還是舊內容，表示用的是單一檔案掛載（第 8 節），執行 `docker compose up -d --force-recreate db`。內容正確的話，新規則寫錯時 PostgreSQL 會沿用舊規則；查看 `pg_hba_file_rules` 的 `error` 欄位，並確認新規則放在 `reject` 之前 |
-| 改了 `initdb/` 卻沒有效果 | 這些腳本只在 volume 是空的時候執行；要改角色，直接下 SQL |
+| 新的 migration 沒有生效（例如少了某個 schema 或授權） | migration 不會自動套用；`git pull` 之後照第 9.1 節重新套用一次 |
 | `password authentication failed` | 密碼檔結尾多了換行，產生密碼時要用 `tr -d '\n'` |
 | 內網其他機器連不到 | `ports` 綁的 IP 不對；或者主機防火牆、路由沒有開放 5432 |

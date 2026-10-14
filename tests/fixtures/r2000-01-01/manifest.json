@@ -1,0 +1,62 @@
+{
+  "dataset": "nhgri-ebi-gwas-catalog",
+  "declared_data_date": "2000-01-01",
+  "distribution_release_date": null,
+  "files": [
+    {
+      "byte_size": 15763,
+      "column_count": 25,
+      "data_row_count": 27,
+      "downloaded_at": "2026-09-03T01:18:28Z",
+      "duplicate_header_names": [],
+      "filename": "gwas-catalog-v1.0.3.1-studies-r2000-01-01.tsv",
+      "final_line_has_newline": true,
+      "format_version": "v1.0.3.1",
+      "header_sha256": "e3458ed549efe32fcb524e3906e11264f333c46a04748af1f03e2ff75bb60953",
+      "http_response_headers": {
+        "content-type": "text/tsv"
+      },
+      "http_status": 200,
+      "load_policy": "load_to_curated",
+      "malformed_examples": [],
+      "malformed_row_count": 0,
+      "requested_url": "https://www.ebi.ac.uk/gwas/api/search/downloads/studies/v1.0.3.1",
+      "role": "published_studies",
+      "sha256": "e52a7846b104c9080e51e5629e72686bd8b7433c4310e921256970eaa408f504",
+      "source_url": "https://www.ebi.ac.uk/gwas/api/search/downloads/studies/v1.0.3.1"
+    }
+  ],
+  "manifest_created_at": "2026-09-03T01:19:22Z",
+  "manifest_schema_version": "1.0.0",
+  "parser_contract": {
+    "bom_policy": "optional UTF-8 BOM removed only for header parsing and header_sha256",
+    "column_count_policy": "strict",
+    "delimiter": "TAB",
+    "empty_string_policy": "preserve",
+    "encoding": "UTF-8",
+    "header": true,
+    "line_ending": "CRLF or LF; removed only for parsing and header_sha256",
+    "malformed_rule": "invalid UTF-8 or physical row column count differs from header",
+    "row_rule": "physical lines"
+  },
+  "pipeline": {
+    "pipeline_version": "1.0.0",
+    "python_version": "3.11.15",
+    "run_id": "0128a388e9af479bb43a63dd8a755673",
+    "tool_name": "gwas-raw-snapshot",
+    "tool_version": "1.0.0"
+  },
+  "provider": "NHGRI-EBI GWAS Catalog",
+  "scope_policy": {
+    "published_studies": "load_to_curated"
+  },
+  "snapshot_content_sha256": null,
+  "snapshot_id": "r2000-01-01",
+  "validation": {
+    "errors": [],
+    "status": "passed",
+    "warnings": [
+      "test fixture: studies only"
+    ]
+  }
+}

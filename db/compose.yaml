@@ -1,0 +1,32 @@
+# Local development and test PostgreSQL. Not for the server: see docs/postgres-docker-playbook.md.
+# Start (and re-apply migrations): docker compose -f db/compose.yaml up -d
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: openpgx
+      POSTGRES_PASSWORD: postgres   # dev only; port is bound to 127.0.0.1
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d openpgx"]   # TCP: the initdb-time server is socket-only
+      interval: 2s
+      retries: 30
+
+  migrate:
+    image: postgres:18
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    volumes:
+      - ./:/db:ro
+    entrypoint: ["sh", "/db/dev-setup.sh"]
+
+volumes:
+  pgdata:
