@@ -1,0 +1,34 @@
+Disease trait	EFO term	EFO URI	Parent term	Parent URI
+1,2-dihydroxy-3-keto-5-methylthiopentene dioxygenase levels	protein measurement	http://www.ebi.ac.uk/efo/EFO_0004747	Other measurement	http://www.ebi.ac.uk/efo/EFO_0001444
+Adult onset asthma and/or BMI	body mass index	http://www.ebi.ac.uk/efo/EFO_0004340	Body measurement	http://www.ebi.ac.uk/efo/EFO_0004324
+Adverse reaction to serum or vaccine (PheCode 941)	response to vaccine	http://www.ebi.ac.uk/efo/EFO_0004645	Biological process	http://purl.obolibrary.org/obo/GO_0008150
+Age spots	solar lentigines measurement	http://www.ebi.ac.uk/efo/EFO_0007850	Other measurement	http://www.ebi.ac.uk/efo/EFO_0001444
+Alzheimer's disease (MTAG)	Alzheimer's disease biomarker measurement	http://www.ebi.ac.uk/efo/EFO_0006514	Other measurement	http://www.ebi.ac.uk/efo/EFO_0001444
+Alzheimer's disease or cardiovascular risk factors (pleiotropy)	waist-hip ratio	http://www.ebi.ac.uk/efo/EFO_0004343	Body measurement	http://www.ebi.ac.uk/efo/EFO_0004324
+Antipsychotic-induced metabolic syndrome in schizophrenia	metabolic syndrome	http://www.ebi.ac.uk/efo/EFO_0000195	Metabolic disorder	http://www.ebi.ac.uk/efo/EFO_0000589
+Any parental history of lung cancer (Firth correction)	family history of lung cancer	http://www.ebi.ac.uk/efo/EFO_0006953	Other measurement	http://www.ebi.ac.uk/efo/EFO_0001444
+Attention deficit hyperactivity disorder or hippocampal volume (pleiotropy)	hippocampal volume	http://www.ebi.ac.uk/efo/EFO_0005035	Other measurement	http://www.ebi.ac.uk/efo/EFO_0001444
+Beard thickness	facial hair thickness	http://purl.obolibrary.org/obo/OBA_2050112	Other measurement	http://www.ebi.ac.uk/efo/EFO_0001444
+Biomedical quantitative traits	bone density	http://purl.obolibrary.org/obo/OBA_1000110	Other measurement	http://www.ebi.ac.uk/efo/EFO_0001444
+Bone mineral density (hip)	hip bone mineral density	http://www.ebi.ac.uk/efo/EFO_0007702	Other measurement	http://www.ebi.ac.uk/efo/EFO_0001444
+Bone mineral density (lumbar spine) in inflammatory bowel disease	spine bone mineral density	http://www.ebi.ac.uk/efo/EFO_0007701	Other measurement	http://www.ebi.ac.uk/efo/EFO_0001444
+Burning and freckling	freckles	http://www.ebi.ac.uk/efo/EFO_0003963	Other trait	http://www.ebi.ac.uk/efo/EFO_0000001
+C.albicans induced IFN-G level	interferon gamma measurement	http://www.ebi.ac.uk/efo/EFO_0008165	Other measurement	http://www.ebi.ac.uk/efo/EFO_0001444
+C.albicans induced IL-6 level	interleukin-6 measurement	http://www.ebi.ac.uk/efo/EFO_0004810	Inflammatory measurement	http://www.ebi.ac.uk/efo/EFO_0004872
+CPA4 protein levels	carboxypeptidase A4 measurement	http://www.ebi.ac.uk/efo/EFO_0801452	Other measurement	http://www.ebi.ac.uk/efo/EFO_0001444
+Cardiometabolic traits	docosahexaenoic acid measurement	http://www.ebi.ac.uk/efo/EFO_0007761	Lipid or lipoprotein measurement	http://www.ebi.ac.uk/efo/EFO_0004529
+Cerebral amyloid deposition (PET imaging)	cerebral amyloid deposition measurement	http://www.ebi.ac.uk/efo/EFO_0007707	Other measurement	http://www.ebi.ac.uk/efo/EFO_0001444
+Childhood lung function (FEV1 percent predicted) in low-income urban environment	forced expiratory volume	http://www.ebi.ac.uk/efo/EFO_0004314	Other measurement	http://www.ebi.ac.uk/efo/EFO_0001444
+DNA methylation (parent-of-origin)	DNA methylation	http://www.ebi.ac.uk/efo/EFO_0022599	Biological process	http://purl.obolibrary.org/obo/GO_0008150
+Docosapentaenoate (n3 DPA; 22:5n3) levels	docosapentaenoic acid measurement	http://www.ebi.ac.uk/efo/EFO_0006809	Lipid or lipoprotein measurement	http://www.ebi.ac.uk/efo/EFO_0004529
+Double-edged eyelids	eye morphology trait	http://purl.obolibrary.org/obo/OBA_VT0002092	Other measurement	http://www.ebi.ac.uk/efo/EFO_0001444
+End stage renal disease x APOL1 genotype interaction	APOL1 risk genotype carrier status	http://www.ebi.ac.uk/efo/EFO_0009324	Other measurement	http://www.ebi.ac.uk/efo/EFO_0001444
+Excessive hairiness	Hirsutism	http://purl.obolibrary.org/obo/HP_0001007	Other trait	http://www.ebi.ac.uk/efo/EFO_0000001
+Excessive sweating	Hyperhidrosis	http://purl.obolibrary.org/obo/HP_0000975	Other trait	http://www.ebi.ac.uk/efo/EFO_0000001
+FVC	vital capacity	http://www.ebi.ac.uk/efo/EFO_0004312	Other measurement	http://www.ebi.ac.uk/efo/EFO_0001444
+Fagerstrӧm test for nicotine dependence	nicotine dependence symptom count	http://www.ebi.ac.uk/efo/EFO_0009262	Other measurement	http://www.ebi.ac.uk/efo/EFO_0001444
+Hair curvature (observational)	coat/hair morphology trait	http://purl.obolibrary.org/obo/OBA_VT0000367	Other measurement	http://www.ebi.ac.uk/efo/EFO_0001444
+Liver stiffness changes at sustained virological response following antiviral therapy in HCV infection	response to antiviral drug	http://www.ebi.ac.uk/efo/EFO_0010123	Biological process	http://purl.obolibrary.org/obo/GO_0008150
+Multiple myeloma (survival)	overall survival	http://www.ebi.ac.uk/efo/EFO_0000638	Other measurement	http://www.ebi.ac.uk/efo/EFO_0001444
+Neuropathic pain	neuropathic pain	http://www.ebi.ac.uk/efo/EFO_0005762	Other trait	http://www.ebi.ac.uk/efo/EFO_0000001
+Protein level change in low calorie diet obesity intervention	response to low calorie diet	http://www.ebi.ac.uk/efo/EFO_0010731	Biological process	http://purl.obolibrary.org/obo/GO_0008150
