@@ -6,7 +6,7 @@ promote: Candidate -> Active Release; `gwas` views point at it, the previous Act
 
 Connection: --dsn, or the standard libpq PG* environment variables / ~/.pgpass when omitted.
 Rows violating the CurationContract become Rejected Rows; over the Rejection Threshold the whole load fails (ADR-0007).
-Scope: studies and associations so far (#4, #5, #7); validation (#6), traits (#8) and ancestries (#9) follow.
+Scope: studies, associations and ancestries so far (#4, #5, #7, #9); validation (#6) and traits (#8) follow.
 """
 
 from __future__ import annotations
@@ -36,9 +36,15 @@ ISO_DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 DECIMAL_RE = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$")
 P_VALUE_RE = re.compile(r"^(\d+(?:\.\d+)?)E-(\d+)$")
 INT4_MIN, INT4_MAX = -(2**31), 2**31 - 1
-# Loaded in this order so foreign_key rules see the datasets they reference; ancestries (#9), traits (#8) follow.
-LOADED_ROLES = ("published_studies", "published_associations")
-DATASET_RULES = {("unique", "fail_load"), ("foreign_key", "reject_row"), ("keep_full_duplicate_rows", None)}
+# Loaded in this order so foreign_key rules see the datasets they reference; traits (#8) follow.
+LOADED_ROLES = ("published_studies", "published_associations", "published_ancestries")
+# keep_full_duplicate_rows and studies_without_ancestry_allowed only declare that the loader enforces nothing.
+DATASET_RULES = {
+    ("unique", "fail_load"),
+    ("foreign_key", "reject_row"),
+    ("keep_full_duplicate_rows", None),
+    ("studies_without_ancestry_allowed", None),
+}
 # The SNPS split_rule policies split_variants implements; any other value fails the load instead of being ignored.
 SNP_SPLIT_POLICY = {
     "alignment": "positional_only_if_token_counts_equal",
@@ -107,6 +113,8 @@ def parse_value(raw: str, column: dict[str, Any]) -> tuple[Any, str | None]:
     pattern = column.get("pattern")
     if pattern and not re.fullmatch(pattern, value):
         return None, "pattern_mismatch"
+    if "enum" in column and value not in column["enum"]:
+        return None, "enum_mismatch"
     return parsed, None
 
 

@@ -46,6 +46,28 @@
       "role": "published_studies",
       "sha256": "e52a7846b104c9080e51e5629e72686bd8b7433c4310e921256970eaa408f504",
       "source_url": "https://www.ebi.ac.uk/gwas/api/search/downloads/studies/v1.0.3.1"
+    },
+    {
+      "byte_size": 8500,
+      "column_count": 17,
+      "data_row_count": 41,
+      "downloaded_at": "2026-09-03T01:18:52Z",
+      "duplicate_header_names": [],
+      "filename": "gwas-catalog-v1.0.3.1-ancestries-r2000-01-01.tsv",
+      "final_line_has_newline": true,
+      "format_version": "v1.0.3.1",
+      "header_sha256": "1e8efe23ee917293ff2af0283455f79aaf3dc6015057d71ea0dc1203d059a132",
+      "http_response_headers": {
+        "content-type": "text/tsv"
+      },
+      "http_status": 200,
+      "load_policy": "load_to_curated",
+      "malformed_examples": [],
+      "malformed_row_count": 0,
+      "requested_url": "https://www.ebi.ac.uk/gwas/api/search/downloads/ancestries/v1.0.3.1",
+      "role": "published_ancestries",
+      "sha256": "0139522cde27f65eed4f57f93dd023802be2b3142c9ab54b893948252d121b00",
+      "source_url": "https://www.ebi.ac.uk/gwas/api/search/downloads/ancestries/v1.0.3.1"
     }
   ],
   "manifest_created_at": "2026-09-03T01:19:22Z",
@@ -70,6 +92,7 @@
   },
   "provider": "NHGRI-EBI GWAS Catalog",
   "scope_policy": {
+    "published_ancestries": "load_to_curated",
     "published_associations": "load_to_curated",
     "published_studies": "load_to_curated"
   },
@@ -79,7 +102,7 @@
     "errors": [],
     "status": "passed",
     "warnings": [
-      "test fixture: studies and associations; association STUDY ACCESSION rewritten to fixture studies"
+      "test fixture: studies, associations and ancestries; association STUDY ACCESSION rewritten to fixture studies; GCST010197 has no ancestry rows"
     ]
   }
 }
