@@ -513,7 +513,7 @@ docker compose exec -T -u postgres db pg_restore -d openpgx --clean --if-exists 
 
 ## 14. 本機開發
 
-開發者在自己的電腦上，可以用簡化版的設定：不需要 TLS，密碼寫在本機檔案，port 只綁 `127.0.0.1`。實際的開發用 Compose 設定與測試資料庫由 #4 放進 repo，照該 ticket 的 README 操作即可。
+開發者在自己的電腦上，可以用簡化版的設定：不需要 TLS，密碼寫在本機檔案，port 只綁 `127.0.0.1`。實際的開發用 Compose 設定與測試資料庫在 repo 的 `db/`，照 `db/README.md` 操作即可。
 
 ---
 
