@@ -4,6 +4,28 @@
   "distribution_release_date": null,
   "files": [
     {
+      "byte_size": 8455,
+      "column_count": 38,
+      "data_row_count": 13,
+      "downloaded_at": "2026-09-03T01:18:08Z",
+      "duplicate_header_names": [],
+      "filename": "gwas-catalog-download-associations-alt-full.tsv",
+      "final_line_has_newline": true,
+      "format_version": "v1.0.2",
+      "header_sha256": "26c88ea3fc41ef385d820d0b018eac44acffe78859abbc624bfcf28418ee8c1d",
+      "http_response_headers": {
+        "content-type": "text/tsv"
+      },
+      "http_status": 200,
+      "load_policy": "load_to_curated",
+      "malformed_examples": [],
+      "malformed_row_count": 0,
+      "requested_url": "https://www.ebi.ac.uk/gwas/api/search/downloads/associations/v1.0.2?split=false",
+      "role": "published_associations",
+      "sha256": "0fbb990b141bdb25efd70170245a2c9c6613003dff79144b9a05597f7c456ef7",
+      "source_url": "https://www.ebi.ac.uk/gwas/api/search/downloads/associations/v1.0.2?split=false"
+    },
+    {
       "byte_size": 15763,
       "column_count": 25,
       "data_row_count": 27,
@@ -48,6 +70,7 @@
   },
   "provider": "NHGRI-EBI GWAS Catalog",
   "scope_policy": {
+    "published_associations": "load_to_curated",
     "published_studies": "load_to_curated"
   },
   "snapshot_content_sha256": null,
@@ -56,7 +79,7 @@
     "errors": [],
     "status": "passed",
     "warnings": [
-      "test fixture: studies only"
+      "test fixture: studies and associations; association STUDY ACCESSION rewritten to fixture studies"
     ]
   }
 }
