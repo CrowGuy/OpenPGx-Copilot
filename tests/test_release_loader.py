@@ -193,6 +193,13 @@ class PreLoadValidationTest(unittest.TestCase):
             "published_ancestries: Load Policy is 'raw_only' in the DatasetContract", dataset_contract=dataset_contract
         )
 
+    def test_malformed_dataset_contract_fails(self) -> None:
+        def edit(contract: dict) -> None:
+            del contract["endpoints"]
+
+        dataset_contract = edited_json(DATASET_CONTRACT, self.tmp / "dataset_contract.json", edit)
+        self.assert_load_fails("endpoints must be a non-empty array", dataset_contract=dataset_contract)
+
     def test_malformed_curation_contract_fails(self) -> None:
         def drop_genome_build(contract: dict) -> None:
             del contract["genome_build"]
@@ -209,12 +216,21 @@ class PreLoadValidationTest(unittest.TestCase):
         def threshold_over_one(contract: dict) -> None:
             dataset_of(contract, "published_studies")["rejection_threshold"] = 5
 
+        def unsupported_dataset_rule(contract: dict) -> None:
+            dataset_of(contract, "published_studies")["dataset_rules"][0]["on_violation"] = "reject_row"
+
+        def unsupported_snp_policy(contract: dict) -> None:
+            columns = dataset_of(contract, "published_associations")["columns"]
+            next(c for c in columns if c["source_column"] == "SNPS")["split_rule"]["token_trim"] = False
+
         cases = {
             "genome_build must be a non-empty string": drop_genome_build,
             "version must be an integer": text_version,
             "published_associations.DATE ADDED TO CATALOG: unsupported curated_type 'float'": unknown_curated_type,
             "needs exactly one dataset with role published_ancestries": missing_dataset,
             "published_studies.rejection_threshold must be a number between 0 and 1": threshold_over_one,
+            "published_studies: unsupported dataset rule": unsupported_dataset_rule,
+            "published_associations.SNPS: unsupported SNPS split_rule policy": unsupported_snp_policy,
         }
         for message, edit in cases.items():
             with self.subTest(message=message):

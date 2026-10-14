@@ -32,7 +32,8 @@ from psycopg import Copy, sql
 from psycopg.copy import FileWriter
 from psycopg.types.json import Jsonb
 
-from gwas_first_pass_profiler import INTEGER_RE, ProfilerError, iter_rows, load_json, read_header, verify_snapshot
+from discover_gwas_release import ConfigurationError, load_contract
+from gwas_first_pass_profiler import INTEGER_RE, ProfilerError, iter_rows, read_header, verify_snapshot
 
 RELEASE_SCHEMA_DDL = Path(__file__).resolve().parents[1] / "db" / "release_schema.sql"
 RELEASE_ID_RE = re.compile(r"^r[0-9]{4}-[0-9]{2}-[0-9]{2}$")
@@ -40,6 +41,7 @@ ISO_DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 DECIMAL_RE = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$")
 P_VALUE_RE = re.compile(r"^(\d+(?:\.\d+)?)E-(\d+)$")
 INT4_MIN, INT4_MAX = -(2**31), 2**31 - 1
+# The curated_type values parse_value handles; checked up front so an all-empty column cannot hide an unknown type.
 CURATED_TYPES = {"text", "integer", "decimal", "flag_01", "p_value", "date", "yes_no"}
 # Loaded in this order so foreign_key rules see the datasets they reference; traits (#8) follow.
 LOADED_ROLES = ("published_studies", "published_associations", "published_ancestries")
@@ -75,10 +77,10 @@ def schema_for(release_id: str) -> str:
     return "gwas_" + release_id.replace("-", "_")
 
 
-def check_curation_contract(contract: Any) -> list[dict[str, Any]]:
-    """Return the LOADED_ROLES datasets, or fail before anything is written if the contract lacks what the loader reads.
+def loaded_datasets(contract: Any) -> list[dict[str, Any]]:
+    """Return the CurationContract datasets of LOADED_ROLES.
 
-    Shape only: which dataset rules and split policies are supported is checked where they are applied, and
+    Fails before anything is written if the contract is malformed or asks for a rule the loader does not implement.
     format_version is compared with the RawSnapshot in load().
     """
 
@@ -109,11 +111,19 @@ def check_curation_contract(contract: Any) -> list[dict[str, Any]]:
                 isinstance(dataset.get(key), list) and all(isinstance(item, dict) for item in dataset[key]),
                 f"{role}.{key} must be an array of objects",
             )
+        for rule in dataset["dataset_rules"]:
+            require(
+                (rule.get("rule"), rule.get("on_violation")) in DATASET_RULES,
+                f"{role}: unsupported dataset rule {rule}",
+            )
         for column in dataset["columns"]:
             name = f"{role}.{column.get('source_column')}"
             for key, kind in (("source_column", str), ("curated_column", str), ("null_tokens", list)):
                 require(isinstance(column.get(key), kind), f"{name}.{key} must be a {kind.__name__}")
-            require(column.get("keep_text") in (None, True, False), f"{name}.keep_text must be a bool or null")
+            require(
+                column.get("keep_text") is None or isinstance(column["keep_text"], bool),
+                f"{name}.keep_text must be a bool or null",
+            )
             require(
                 column.get("curated_type") in CURATED_TYPES,
                 f"{name}: unsupported curated_type {column.get('curated_type')!r}",
@@ -122,9 +132,13 @@ def check_curation_contract(contract: Any) -> list[dict[str, Any]]:
                 column.get("on_parse_failure") in ("reject_row", "null"),
                 f"{name}: unsupported on_parse_failure {column.get('on_parse_failure')!r}",
             )
+            split_rule = column.get("split_rule")
+            require(split_rule is None or isinstance(split_rule, dict), f"{name}.split_rule must be an object or null")
             require(
-                column.get("split_rule") is None or isinstance(column["split_rule"], dict),
-                f"{name}.split_rule must be an object or null",
+                not split_rule
+                or split_rule.get("target_table") != "association_snp"
+                or all(split_rule.get(key) == value for key, value in SNP_SPLIT_POLICY.items()),
+                f"{name}: unsupported SNPS split_rule policy, expected {SNP_SPLIT_POLICY}",
             )
         datasets.append(dataset)
     return datasets
@@ -238,8 +252,6 @@ def load_dataset(
     unique: list[tuple[list[str], dict[tuple[Any, ...], int]]] = []
     foreign: list[tuple[str, int, set[Any]]] = []
     for rule in dataset["dataset_rules"]:
-        if (rule["rule"], rule.get("on_violation")) not in DATASET_RULES:
-            raise LoaderError(f"{role}: unsupported dataset rule {rule}")
         if rule["rule"] == "unique":
             unique.append((rule["columns"], {}))
         elif rule["rule"] == "foreign_key":
@@ -263,8 +275,6 @@ def load_dataset(
     )
     if snp_column:
         snp_rule = snp_column["split_rule"]
-        if any(snp_rule.get(key) != value for key, value in SNP_SPLIT_POLICY.items()):
-            raise LoaderError(f"{role}: unsupported SNPS split_rule policy, expected {SNP_SPLIT_POLICY}")
         snp_index = header.index(snp_column["source_column"])
         aligned_indexes = [header.index(name) for name in snp_rule["aligned_columns"]]
         curated += ["snp_combination", "misaligned"]
@@ -363,34 +373,35 @@ def load(args: argparse.Namespace) -> str:
         raise LoaderError(f"Cannot read CurationContract {args.curation_contract}: {exc}") from exc
     except ValueError as exc:
         raise LoaderError(f"Malformed CurationContract: not JSON: {exc}") from exc
-    datasets = check_curation_contract(contract)
+    datasets = loaded_datasets(contract)
     manifest, manifest_sha, files = verify_snapshot(args.snapshot_dir, set(LOADED_ROLES))
     release_id = manifest["snapshot_id"]
     schema = schema_for(release_id)
-    dataset_contract = load_json(args.dataset_contract, "DatasetContract")
-    endpoints = {endpoint["role"]: endpoint for endpoint in dataset_contract["endpoints"]}
+    endpoints = {endpoint.role: endpoint for endpoint in load_contract(args.dataset_contract).endpoints}
     files_by_role = {f["role"]: f for f in files}
-    filenames = {role: f["filename"] for role, f in files_by_role.items()}
     for dataset in datasets:
         role = dataset["role"]
-        file, filename = files_by_role[role], filenames[role]
+        file = files_by_role[role]
+        filename = file["filename"]
         endpoint = endpoints.get(role)
         if endpoint is None:
             raise LoaderError(f"{role}: absent from the DatasetContract")
-        if endpoint["load_policy"] != "load_to_curated":
+        if endpoint.load_policy != "load_to_curated":
             raise LoaderError(
-                f"{role}: Load Policy is {endpoint['load_policy']!r} in the DatasetContract, not load_to_curated"
+                f"{role}: Load Policy is {endpoint.load_policy!r} in the DatasetContract, not load_to_curated"
             )
+        if endpoint.expected_header is None:
+            raise LoaderError(f"{role}: the DatasetContract has no expected_header to check {filename} against")
         if file.get("format_version") != dataset.get("format_version"):
             raise LoaderError(
                 f"{filename}: format_version {file.get('format_version')!r} "
                 f"does not match CurationContract {dataset.get('format_version')!r}"
             )
         header = read_header(args.snapshot_dir / filename)
-        if header != endpoint["expected_header"]:
+        if tuple(header) != endpoint.expected_header:
             column, (actual, expected) = next(
                 (i, pair)
-                for i, pair in enumerate(itertools.zip_longest(header, endpoint["expected_header"]), 1)
+                for i, pair in enumerate(itertools.zip_longest(header, endpoint.expected_header), 1)
                 if pair[0] != pair[1]
             )
             raise LoaderError(
@@ -422,7 +433,9 @@ def load(args: argparse.Namespace) -> str:
         conn.execute(sql.SQL("SET LOCAL search_path TO {}").format(sql.Identifier(schema)))
         conn.execute(RELEASE_SCHEMA_DDL.read_text(encoding="utf-8"))
         report = {
-            dataset["role"]: load_dataset(conn, args.snapshot_dir / filenames[dataset["role"]], dataset, loaded_keys)
+            dataset["role"]: load_dataset(
+                conn, args.snapshot_dir / files_by_role[dataset["role"]]["filename"], dataset, loaded_keys
+            )
             for dataset in datasets
         }
         conn.execute(
@@ -479,7 +492,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         print({"load": load, "promote": promote}[args.command](args))
-    except (LoaderError, ProfilerError, psycopg.Error) as exc:
+    except (LoaderError, ProfilerError, ConfigurationError, psycopg.Error) as exc:
         log(f"ERROR: {exc}")
         return 2
     except KeyboardInterrupt:
