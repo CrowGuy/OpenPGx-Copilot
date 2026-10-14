@@ -11,6 +11,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -36,6 +37,9 @@ STUDIES_FILE = "gwas-catalog-v1.0.3.1-studies-r2000-01-01.tsv"
 ASSOCIATIONS_FILE = "gwas-catalog-download-associations-alt-full.tsv"
 ANCESTRIES_FILE = "gwas-catalog-v1.0.3.1-ancestries-r2000-01-01.tsv"
 CONTRACT = ROOT / "raw" / "gwas_catalog" / "contracts" / "gwas_curation_contract.json"
+DATASET_CONTRACT = ROOT / "raw" / "gwas_catalog" / "contracts" / "gwas_dataset_contract.json"
+# Nothing listens here: a load that reports a validation error against it failed before touching the database.
+NO_DB_DSN = "host=127.0.0.1 port=1 connect_timeout=1"
 RELEASE = "r2000-01-01"
 SCHEMA = "gwas_r2000_01_01"
 PG_TYPES = {"text": "text", "integer": "integer", "date": "date", "yes_no": "boolean"}
@@ -96,6 +100,147 @@ def ancestries_with_violations(header: list[str], rows: list[list[str]]) -> None
     rows[3][col("STUDY ACCESSION")] = "GCST999999"
 
 
+def swap_date_and_journal(header: list[str], rows: list[list[str]]) -> None:
+    """Every contract column is still present, but DATE and JOURNAL trade places."""
+    i, j = header.index("DATE"), header.index("JOURNAL")
+    for row in [header, *rows]:
+        row[i], row[j] = row[j], row[i]
+
+
+def load_argv(snapshot: Path, contract: Path, dataset_contract: Path, dsn: str) -> list[str]:
+    return [
+        "load",
+        f"--snapshot-dir={snapshot}",
+        f"--curation-contract={contract}",
+        f"--dataset-contract={dataset_contract}",
+        f"--dsn={dsn}",
+    ]
+
+
+def edited_json(source: Path, target: Path, edit) -> Path:
+    """Write `source` to `target` after `edit(document)` changed it in place."""
+    document = json.loads(source.read_text(encoding="utf-8"))
+    edit(document)
+    target.write_text(json.dumps(document), encoding="utf-8")
+    return target
+
+
+def dataset_of(contract: dict, role: str) -> dict:
+    return next(d for d in contract["datasets"] if d["role"] == role)
+
+
+@unittest.skipIf(psycopg is None, "psycopg is not installed")
+class PreLoadValidationTest(unittest.TestCase):
+    """Untrustworthy input fails the load before it connects, so before any schema or meta row; no database needed."""
+
+    def setUp(self) -> None:
+        import gwas_release_loader
+
+        self.loader = gwas_release_loader
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+
+    def assert_load_fails(
+        self,
+        message: str,
+        snapshot: Path = SNAPSHOT,
+        contract: Path = CONTRACT,
+        dataset_contract: Path = DATASET_CONTRACT,
+    ) -> None:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            self.assertEqual(self.loader.main(load_argv(snapshot, contract, dataset_contract, NO_DB_DSN)), 2)
+        self.assertIn(message, stderr.getvalue())
+
+    def copied_snapshot(self) -> Path:
+        return Path(shutil.copytree(SNAPSHOT, self.tmp / "snapshot"))
+
+    def test_snapshot_without_success_marker_fails(self) -> None:
+        snapshot = self.copied_snapshot()
+        (snapshot / "_SUCCESS").unlink()
+        self.assert_load_fails("Snapshot has no _SUCCESS marker", snapshot)
+
+    def test_manifest_checksum_mismatch_fails(self) -> None:
+        snapshot = self.copied_snapshot()
+        with (snapshot / "manifest.json").open("a", encoding="utf-8") as manifest:
+            manifest.write(" ")
+        self.assert_load_fails("Checksum mismatch for", snapshot)
+
+    def test_header_out_of_order_fails(self) -> None:
+        snapshot = make_snapshot(self.tmp, "r2000-01-02", swap_date_and_journal)
+        self.assert_load_fails(
+            f"{STUDIES_FILE}: header does not match DatasetContract expected_header at column 4: "
+            "'JOURNAL' instead of 'DATE'",
+            snapshot,
+        )
+
+    def test_format_version_differing_from_curation_contract_fails(self) -> None:
+        def edit(contract: dict) -> None:
+            dataset_of(contract, "published_studies")["format_version"] = "v1.0.4"
+
+        contract = edited_json(CONTRACT, self.tmp / "contract.json", edit)
+        self.assert_load_fails(
+            f"{STUDIES_FILE}: format_version 'v1.0.3.1' does not match CurationContract 'v1.0.4'", contract=contract
+        )
+
+    def test_loaded_role_must_be_load_to_curated(self) -> None:
+        def edit(contract: dict) -> None:
+            next(e for e in contract["endpoints"] if e["role"] == "published_ancestries")["load_policy"] = "raw_only"
+
+        dataset_contract = edited_json(DATASET_CONTRACT, self.tmp / "dataset_contract.json", edit)
+        self.assert_load_fails(
+            "published_ancestries: Load Policy is 'raw_only' in the DatasetContract", dataset_contract=dataset_contract
+        )
+
+    def test_malformed_dataset_contract_fails(self) -> None:
+        def edit(contract: dict) -> None:
+            del contract["endpoints"]
+
+        dataset_contract = edited_json(DATASET_CONTRACT, self.tmp / "dataset_contract.json", edit)
+        self.assert_load_fails("endpoints must be a non-empty array", dataset_contract=dataset_contract)
+
+    def test_malformed_curation_contract_fails(self) -> None:
+        def drop_genome_build(contract: dict) -> None:
+            del contract["genome_build"]
+
+        def text_version(contract: dict) -> None:
+            contract["version"] = "1"
+
+        def unknown_curated_type(contract: dict) -> None:
+            dataset_of(contract, "published_associations")["columns"][0]["curated_type"] = "float"
+
+        def missing_dataset(contract: dict) -> None:
+            contract["datasets"] = [d for d in contract["datasets"] if d["role"] != "published_ancestries"]
+
+        def threshold_over_one(contract: dict) -> None:
+            dataset_of(contract, "published_studies")["rejection_threshold"] = 5
+
+        def unsupported_dataset_rule(contract: dict) -> None:
+            dataset_of(contract, "published_studies")["dataset_rules"][0]["on_violation"] = "reject_row"
+
+        def unsupported_snp_policy(contract: dict) -> None:
+            columns = dataset_of(contract, "published_associations")["columns"]
+            next(c for c in columns if c["source_column"] == "SNPS")["split_rule"]["token_trim"] = False
+
+        cases = {
+            "genome_build must be a non-empty string": drop_genome_build,
+            "version must be an integer": text_version,
+            "published_associations.DATE ADDED TO CATALOG: unsupported curated_type 'float'": unknown_curated_type,
+            "needs exactly one dataset with role published_ancestries": missing_dataset,
+            "published_studies.rejection_threshold must be a number between 0 and 1": threshold_over_one,
+            "published_studies: unsupported dataset rule": unsupported_dataset_rule,
+            "published_associations.SNPS: unsupported SNPS split_rule policy": unsupported_snp_policy,
+        }
+        for message, edit in cases.items():
+            with self.subTest(message=message):
+                contract = edited_json(CONTRACT, self.tmp / "contract.json", edit)
+                self.assert_load_fails(f"Malformed CurationContract: {message}", contract=contract)
+        broken = self.tmp / "broken.json"
+        broken.write_text("{", encoding="utf-8")
+        self.assert_load_fails("Malformed CurationContract: not JSON", contract=broken)
+
+
 @unittest.skipIf(psycopg is None, "psycopg is not installed")
 class SplitVariantsTest(unittest.TestCase):
     """Locus Alignment edge cases absent from the fixture; no database needed."""
@@ -141,9 +286,7 @@ class ReleaseLoaderTest(unittest.TestCase):
         self.tmp = Path(tmp.name)
 
     def load(self, snapshot: Path = SNAPSHOT, contract: Path = CONTRACT) -> int:
-        return self.loader.main(
-            ["load", "--snapshot-dir", str(snapshot), "--curation-contract", str(contract), "--dsn", ETL_DSN]
-        )
+        return self.loader.main(load_argv(snapshot, contract, DATASET_CONTRACT, ETL_DSN))
 
     def lenient_contract(self) -> Path:
         """The real CurationContract with Rejection Thresholds the small fixtures can stay under."""
@@ -166,6 +309,29 @@ class ReleaseLoaderTest(unittest.TestCase):
         self.assertEqual(self.query(ETL_DSN, "SELECT release_id, status FROM meta.release"), [(RELEASE, "candidate")])
         self.assertEqual(self.query(ETL_DSN, f"SELECT count(*) FROM {SCHEMA}.study"), [(27,)])
         self.assertEqual(self.query(ETL_DSN, "SELECT to_regclass('gwas.study')"), [(None,)])
+
+    def test_raw_only_file_is_not_loaded(self) -> None:
+        self.assertEqual(self.load(), 0)
+        unpublished = ("GCST90002217", "GCST90002218")
+        for table in ("study", "ancestry"):
+            rows = self.query(
+                ETL_DSN, f"SELECT count(*) FROM {SCHEMA}.{table} WHERE study_accession = ANY(%s)", (list(unpublished),)
+            )
+            self.assertEqual(rows, [(0,)], table)
+        (roles,) = self.query(ETL_DSN, "SELECT array(SELECT jsonb_object_keys(load_report)) FROM meta.release")[0]
+        self.assertEqual(sorted(roles), ["published_ancestries", "published_associations", "published_studies"])
+
+    def test_meta_records_what_the_release_was_built_from(self) -> None:
+        self.assertEqual(self.load(), 0)
+        manifest_sha = (SNAPSHOT / "manifest.sha256").read_text(encoding="ascii").split()[0]
+        contract_sha = hashlib.sha256(CONTRACT.read_bytes()).hexdigest()
+        rows = self.query(
+            ANALYST_DSN,
+            "SELECT manifest_sha256, curation_contract_version, curation_contract_sha256, genome_build "
+            "FROM meta.release WHERE release_id = %s",
+            (RELEASE,),
+        )
+        self.assertEqual(rows, [(manifest_sha, 1, contract_sha, "GRCh38")])
 
     def test_first_promote_makes_study_queryable_by_accession(self) -> None:
         self.assertEqual(self.load(), 0)
