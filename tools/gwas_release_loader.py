@@ -5,12 +5,14 @@ load:    RawSnapshot + CurationContract -> gwas_r<YYYY_MM_DD> schema, Release St
 promote: Candidate -> Active Release; `gwas` views point at it, the previous Active Release is `retired`.
 
 Connection: --dsn, or the standard libpq PG* environment variables / ~/.pgpass when omitted.
-Scope: studies only so far (#4); Rejected Rows (#5), validation (#6) and other datasets (#7-#9) follow.
+Rows violating the CurationContract become Rejected Rows; over the Rejection Threshold the whole load fails (ADR-0007).
+Scope: studies only so far (#4, #5); validation (#6) and other datasets (#7-#9) follow.
 """
 
 from __future__ import annotations
 
 import argparse
+import collections
 import datetime as dt
 import json
 from pathlib import Path
@@ -20,6 +22,7 @@ from typing import Any, Sequence
 
 import psycopg
 from psycopg import sql
+from psycopg.types.json import Jsonb
 
 from gwas_first_pass_profiler import INTEGER_RE, ProfilerError, iter_rows, read_header, verify_snapshot
 
@@ -43,35 +46,33 @@ def schema_for(release_id: str) -> str:
     return "gwas_" + release_id.replace("-", "_")
 
 
-def parse_value(raw: str, column: dict[str, Any]) -> Any:
-    """Apply one CurationContract column rule. Returns the curated value or None."""
+def parse_value(raw: str, column: dict[str, Any]) -> tuple[Any, str | None]:
+    """Apply one CurationContract column rule. Returns (curated value, parse failure reason or None)."""
     value = raw.strip()
     if value == "":
-        parsed = None
-    else:
-        curated_type = column["curated_type"]
-        if curated_type == "text":
-            parsed = value
-        elif curated_type == "integer":
-            parsed = int(value) if INTEGER_RE.fullmatch(value) else None
-            if parsed is not None and not INT4_MIN <= parsed <= INT4_MAX:
-                parsed = None
-        elif curated_type == "date":
-            try:
-                parsed = dt.date.fromisoformat(value) if ISO_DATE_RE.fullmatch(value) else None
-            except ValueError:
-                parsed = None
-        elif curated_type == "yes_no":
-            parsed = {"yes": True, "no": False}.get(value.lower())
-        else:
-            raise LoaderError(f"Unsupported curated_type {curated_type!r} for {column['source_column']}")
-        pattern = column.get("pattern")
-        if parsed is not None and pattern and not re.fullmatch(pattern, value):
+        return None, "empty" if column["on_parse_failure"] == "reject_row" else None
+    curated_type = column["curated_type"]
+    if curated_type == "text":
+        parsed = value
+    elif curated_type == "integer":
+        parsed = int(value) if INTEGER_RE.fullmatch(value) else None
+        if parsed is not None and not INT4_MIN <= parsed <= INT4_MAX:
             parsed = None
-    if parsed is None and column["on_parse_failure"] == "reject_row":
-        # ponytail: fail the whole load; #5 turns this into a Rejected Row.
-        raise LoaderError(f"Required field {column['source_column']} failed to parse: {raw!r}")
-    return parsed
+    elif curated_type == "date":
+        try:
+            parsed = dt.date.fromisoformat(value) if ISO_DATE_RE.fullmatch(value) else None
+        except ValueError:
+            parsed = None
+    elif curated_type == "yes_no":
+        parsed = {"yes": True, "no": False}.get(value.lower())
+    else:
+        raise LoaderError(f"Unsupported curated_type {curated_type!r} for {column['source_column']}")
+    if parsed is None:
+        return None, f"invalid_{curated_type}"
+    pattern = column.get("pattern")
+    if pattern and not re.fullmatch(pattern, value):
+        return None, "pattern_mismatch"
+    return parsed, None
 
 
 def load(args: argparse.Namespace) -> str:
@@ -88,13 +89,23 @@ def load(args: argparse.Namespace) -> str:
     if missing:
         raise LoaderError(f"{path.name} is missing contract columns: {missing}")
     indexes = [header.index(c["source_column"]) for c in columns]
+    # ponytail: no Release table has *_text columns yet; #7 adds keep_text with the association table.
+    if any(c.get("keep_text") for c in columns):
+        raise LoaderError(f"{dataset['role']}: keep_text is not supported yet")
 
     copy_sql = sql.SQL("COPY {}.{} ({}) FROM STDIN").format(
         sql.Identifier(schema),
         sql.Identifier(dataset["curated_table"]),
         sql.SQL(", ").join(sql.Identifier(c["curated_column"]) for c in columns),
     )
+    rejected: list[tuple[str, int, str, str, str]] = []
+    reasons: collections.Counter[str] = collections.Counter()
+    nulled: collections.Counter[str] = collections.Counter()
+    source_rows = rejected_rows = 0
     # One transaction: `loading` is visible only inside it; any failure rolls back the schema and meta row.
+    # ponytail: dataset rule `unique` (fail_load) is enforced only by the DDL PRIMARY KEY, so a rule missing
+    # from the DDL is silently skipped. #7 dispatches dataset_rules for foreign_key (reject_row): handle `unique`
+    # there too, reporting the source line, and keep the PRIMARY KEY as a safety net.
     with psycopg.connect(args.dsn) as conn:
         conn.execute("INSERT INTO meta.release (release_id, status) VALUES (%s, 'loading')", (release_id,))
         conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
@@ -102,12 +113,50 @@ def load(args: argparse.Namespace) -> str:
         conn.execute(RELEASE_SCHEMA_DDL.read_text(encoding="utf-8"))
         with conn.cursor().copy(copy_sql) as copy:
             for line_number, row in iter_rows(path, len(header)):
-                try:
-                    values = [parse_value(row[i], c) for i, c in zip(indexes, columns)]
-                except LoaderError as exc:
-                    raise LoaderError(f"{path.name}:{line_number}: {exc}") from exc
-                copy.write_row(values)
-        conn.execute("UPDATE meta.release SET status = 'candidate' WHERE release_id = %s", (release_id,))
+                source_rows += 1
+                values, violations = [], []
+                for i, column in zip(indexes, columns):
+                    value, failure = parse_value(row[i], column)
+                    if failure and column["on_parse_failure"] == "reject_row":
+                        violations.append((path.name, line_number, column["source_column"], failure, row[i]))
+                        reasons[f"{column['source_column']}: {failure}"] += 1
+                    elif failure:
+                        nulled[column["source_column"]] += 1
+                    values.append(value)
+                if violations:
+                    # ponytail: held in memory until the threshold check; a source format change can make this every row.
+                    # Stream into a temp table if that ever matters.
+                    rejected_rows += 1
+                    rejected.extend(violations)
+                else:
+                    copy.write_row(values)
+        ratio = rejected_rows / source_rows if source_rows else 0.0
+        threshold = dataset["rejection_threshold"]
+        report = {
+            dataset["role"]: {
+                "source_rows": source_rows,
+                "loaded_rows": source_rows - rejected_rows,
+                "rejected_rows": rejected_rows,
+                "rejected_ratio": ratio,
+                "rejection_threshold": threshold,
+                "rejection_reasons": dict(reasons),
+                "nulled_values": dict(nulled),
+            }
+        }
+        log(f"Load report for {release_id}: {json.dumps(report, ensure_ascii=False)}")
+        if ratio > threshold:
+            raise LoaderError(
+                f"{dataset['role']}: Rejected Row ratio {ratio:.4%} exceeds Rejection Threshold {threshold:.4%}"
+            )
+        with conn.cursor().copy(
+            "COPY rejected_row (source_file, source_line, source_column, reason, value) FROM STDIN"
+        ) as copy:
+            for violation in rejected:
+                copy.write_row(violation)
+        conn.execute(
+            "UPDATE meta.release SET status = 'candidate', load_report = %s WHERE release_id = %s",
+            (Jsonb(report), release_id),
+        )
     log(f"Loaded {release_id} into {schema} as candidate")
     return schema
 
