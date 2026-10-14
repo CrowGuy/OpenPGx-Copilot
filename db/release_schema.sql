@@ -133,6 +133,7 @@ CREATE TABLE association_trait (
 );
 CREATE INDEX ON association_trait (efo_uri);
 
+-- The same split of study.mapped_trait_uri.
 CREATE TABLE study_trait (
     study_accession text NOT NULL REFERENCES study,
     efo_uri text NOT NULL,

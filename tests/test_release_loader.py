@@ -106,6 +106,11 @@ def association_with_invalid_trait_uri(header: list[str], rows: list[list[str]])
     rows[0][header.index("MAPPED_TRAIT_URI")] = "http://www.ebi.ac.uk/efo/EFO_0007702, EFO_0000001"
 
 
+def study_with_empty_trait_uri_token(header: list[str], rows: list[list[str]]) -> None:
+    """GCST006430 (line 8) gets an empty token between its two URIs; an empty token fails token_pattern too."""
+    rows[6][header.index("MAPPED_TRAIT_URI")] = "http://www.ebi.ac.uk/efo/EFO_0004343, , http://www.ebi.ac.uk/efo/EFO_0004340"
+
+
 def swap_date_and_journal(header: list[str], rows: list[list[str]]) -> None:
     """Every contract column is still present, but DATE and JOURNAL trade places."""
     i, j = header.index("DATE"), header.index("JOURNAL")
@@ -682,10 +687,12 @@ class ReleaseLoaderTest(unittest.TestCase):
         self.assertEqual(rows, [("lung carcinoma, family history of lung cancer", False, uris)])
         rows = self.query(
             ETL_DSN,
-            f"SELECT s.mapped_trait, count(*) FROM {SCHEMA}.study s JOIN {SCHEMA}.study_trait t "
-            f"USING (study_accession) WHERE s.study_accession = 'GCST006430' GROUP BY s.mapped_trait",
+            f"SELECT s.mapped_trait, array_agg(t.efo_uri ORDER BY t.efo_uri) FROM {SCHEMA}.study s "
+            f"JOIN {SCHEMA}.study_trait t USING (study_accession) WHERE s.study_accession = 'GCST006430' "
+            f"GROUP BY s.mapped_trait",
         )
-        self.assertEqual(rows, [("waist-hip ratio, body mass index", 2)])
+        study_uris = ["http://www.ebi.ac.uk/efo/EFO_0004340", "http://www.ebi.ac.uk/efo/EFO_0004343"]
+        self.assertEqual(rows, [("waist-hip ratio, body mass index", study_uris)])
 
     def test_uri_absent_from_trait_mappings_is_kept(self) -> None:
         self.assertEqual(self.load(), 0)
@@ -725,6 +732,21 @@ class ReleaseLoaderTest(unittest.TestCase):
         )
         (report,) = self.query(
             ETL_DSN, "SELECT load_report -> 'published_associations' FROM meta.release WHERE release_id = 'r2000-01-02'"
+        )[0]
+        self.assertEqual((report["trait_uri_invalid_rows"], report["rejected_rows"]), (1, 0))
+
+    def test_invalid_study_trait_uri_token_is_dropped_and_row_flagged(self) -> None:
+        snapshot = make_snapshot(self.tmp, "r2000-01-02", study_with_empty_trait_uri_token)
+        self.assertEqual(self.load(snapshot), 0)
+        rows = self.query(
+            ETL_DSN,
+            "SELECT s.study_accession, count(t.efo_uri) FROM gwas_r2000_01_02.study s "
+            "JOIN gwas_r2000_01_02.study_trait t USING (study_accession) WHERE s.trait_uri_invalid "
+            "GROUP BY s.study_accession",
+        )
+        self.assertEqual(rows, [("GCST006430", 2)])
+        (report,) = self.query(
+            ETL_DSN, "SELECT load_report -> 'published_studies' FROM meta.release WHERE release_id = 'r2000-01-02'"
         )[0]
         self.assertEqual((report["trait_uri_invalid_rows"], report["rejected_rows"]), (1, 0))
 

@@ -307,7 +307,7 @@ def load_dataset(
     if trait_column:
         trait_rule = trait_column["split_rule"]
         trait_table = trait_rule["target_table"]
-        trait_key = curated.index(TRAIT_TABLES[trait_table])
+        trait_key_index = curated.index(TRAIT_TABLES[trait_table])
         curated.append("trait_uri_invalid")
     copy_sql = sql.SQL("COPY {} ({}) FROM STDIN").format(
         sql.Identifier(dataset["curated_table"]), sql.SQL(", ").join(map(sql.Identifier, curated))
@@ -362,6 +362,7 @@ def load_dataset(
                 for column_name, loaded in referenced:
                     loaded.add(parsed[column_name])
                 loaded_rows += 1
+                # From here on values lines up with curated, which trait_key_index points into.
                 if "surrogate_key" in dataset:
                     values.insert(0, loaded_rows)
                 if snp_column:
@@ -378,7 +379,7 @@ def load_dataset(
                     values.append(len(valid) < len(tokens))
                     trait_uri_invalid_rows += len(valid) < len(tokens)
                     for uri in dict.fromkeys(valid):
-                        trait_copy.write_row((values[trait_key], uri))
+                        trait_copy.write_row((values[trait_key_index], uri))
                 copy.write_row(values)
 
         rejected_rows = source_rows - loaded_rows
