@@ -447,6 +447,155 @@ class ReleaseLoaderTest(unittest.TestCase):
         )
         self.assertEqual(rows, [(True,)])
 
+    def rebuild(self, release: str = RELEASE, snapshot: Path = SNAPSHOT, contract: Path = CONTRACT) -> int:
+        return self.loader.main(
+            [
+                "rebuild",
+                f"--release={release}",
+                f"--snapshot-dir={snapshot}",
+                f"--curation-contract={contract}",
+                f"--dsn={ETL_DSN}",
+            ]
+        )
+
+    def drop_schema(self, schema: str = SCHEMA) -> None:
+        """What a `meta`-only restore, or a promote beyond the kept places, leaves: the meta row without its schema."""
+        with psycopg.connect(ETL_DSN) as conn:
+            conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
+
+    def schema_contents(self, schema: str = SCHEMA) -> dict[str, list[tuple]]:
+        tables = self.query(ETL_DSN, "SELECT table_name FROM information_schema.tables WHERE table_schema = %s", (schema,))
+        return {
+            table: self.query(ETL_DSN, f"SELECT md5(string_agg(t::text, ',' ORDER BY t::text)) FROM {schema}.{table} t")
+            for (table,) in tables
+        }
+
+    def schema_exists(self, schema: str = SCHEMA) -> bool:
+        return self.query(ETL_DSN, "SELECT to_regnamespace(%s) IS NOT NULL", (schema,))[0][0]
+
+    def test_rebuild_restores_active_release_and_keeps_its_approval(self) -> None:
+        self.assertEqual(self.load(), 0)
+        self.assertEqual(self.promote(), 0)
+        contents = self.schema_contents()
+        meta = self.query(ETL_DSN, "SELECT * FROM meta.release")
+        self.drop_schema()
+        self.assertEqual(self.query(ETL_DSN, "SELECT to_regclass('gwas.study')"), [(None,)])
+        self.assertEqual(self.rebuild(), 0)
+        self.assertEqual(len(contents), 8)
+        self.assertEqual(self.schema_contents(), contents)
+        self.assertEqual(self.query(ETL_DSN, "SELECT * FROM meta.release"), meta)
+        self.assertEqual(self.query(ANALYST_DSN, "SELECT count(*) FROM gwas.study"), [(27,)])
+
+    def test_rebuilding_a_retired_release_leaves_gwas_views(self) -> None:
+        self.assertEqual(self.load(), 0)
+        self.assertEqual(self.promote(), 0)
+        contents = self.schema_contents()
+        self.assertEqual(self.load(make_snapshot(self.tmp, "r2000-01-02", unchanged)), 0)
+        self.assertEqual(self.promote("r2000-01-02"), 0)
+        views = "SELECT table_name, view_definition FROM information_schema.views WHERE table_schema = 'gwas' ORDER BY 1"
+        before = self.query(ETL_DSN, views), self.query(ETL_DSN, "SELECT * FROM meta.release ORDER BY release_id")
+        self.drop_schema()
+        self.assertEqual(self.rebuild(), 0)
+        self.assertEqual(self.schema_contents(), contents)
+        after = self.query(ETL_DSN, views), self.query(ETL_DSN, "SELECT * FROM meta.release ORDER BY release_id")
+        self.assertEqual(after, before)
+
+    def test_rebuild_fails_while_the_schema_exists(self) -> None:
+        self.assertEqual(self.load(), 0)
+        self.assertEqual(self.promote(), 0)
+        before = self.schema_contents(), self.query(ETL_DSN, "SELECT * FROM meta.release")
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            self.assertEqual(self.rebuild(), 2)
+        self.assertIn(f"{SCHEMA} already exists", stderr.getvalue())
+        self.assertEqual((self.schema_contents(), self.query(ETL_DSN, "SELECT * FROM meta.release")), before)
+        self.assertEqual(self.query(ANALYST_DSN, "SELECT count(*) FROM gwas.study"), [(27,)])
+
+    def test_rebuild_needs_an_active_or_retired_release_in_meta(self) -> None:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            self.assertEqual(self.rebuild(), 2)
+            self.assertEqual(self.load(), 0)
+            self.drop_schema()
+            self.assertEqual(self.rebuild(), 2)
+        self.assertEqual(stderr.getvalue().count(f"{RELEASE} is not an active or retired Release in meta.release"), 2)
+        self.assertFalse(self.schema_exists())
+        self.assertEqual(self.query(ETL_DSN, "SELECT status FROM meta.release"), [("candidate",)])
+
+    def test_rebuild_inputs_must_match_meta(self) -> None:
+        self.assertEqual(self.load(), 0)
+        self.assertEqual(self.promote(), 0)
+        self.drop_schema()
+        meta = self.query(ETL_DSN, "SELECT * FROM meta.release")
+
+        def drop_last_study(header: list[str], rows: list[list[str]]) -> None:
+            rows.pop()
+
+        def bump_version(contract: dict) -> None:
+            contract["version"] += 1
+
+        cases = [
+            (dict(snapshot=make_snapshot(self.tmp, RELEASE, drop_last_study)), "RawSnapshot manifest sha256"),
+            (dict(contract=edited_json(CONTRACT, self.tmp / "v2.json", bump_version)), "CurationContract version 2"),
+            (dict(contract=edited_json(CONTRACT, self.tmp / "same.json", lambda c: None)), "CurationContract sha256"),
+            (dict(release="r2000-01-02"), "RawSnapshot r2000-01-01 is not Release r2000-01-02"),
+        ]
+        for kwargs, message in cases:
+            with self.subTest(message=message):
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr):
+                    self.assertEqual(self.rebuild(**kwargs), 2)
+                self.assertIn(message, stderr.getvalue())
+                self.assertFalse(self.schema_exists())
+                self.assertEqual(self.query(ETL_DSN, "SELECT * FROM meta.release"), meta)
+
+    def test_rebuild_fails_without_recorded_inputs(self) -> None:
+        self.assertEqual(self.load(), 0)
+        self.assertEqual(self.promote(), 0)
+        self.drop_schema()
+        # A Release loaded before #6 has no recorded RawSnapshot manifest or CurationContract.
+        with psycopg.connect(ETL_DSN) as conn:
+            conn.execute("UPDATE meta.release SET manifest_sha256 = NULL")
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            self.assertEqual(self.rebuild(), 2)
+        self.assertIn(f"{RELEASE} has no recorded RawSnapshot manifest", stderr.getvalue())
+        self.assertFalse(self.schema_exists())
+
+    def test_rebuild_differing_from_the_load_report_rolls_back(self) -> None:
+        self.assertEqual(self.load(), 0)
+        self.assertEqual(self.promote(), 0)
+        self.drop_schema()
+        # As if the loader had curated the same inputs differently when the Release was loaded.
+        with psycopg.connect(ETL_DSN) as conn:
+            conn.execute(
+                "UPDATE meta.release SET load_report = jsonb_set(load_report, '{published_studies,rejected_rows}', '1')"
+            )
+        meta = self.query(ETL_DSN, "SELECT * FROM meta.release")
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            self.assertEqual(self.rebuild(), 2)
+        self.assertIn("published_studies rejected_rows: expected 1, rebuilt 0", stderr.getvalue())
+        self.assertFalse(self.schema_exists())
+        self.assertEqual(self.query(ETL_DSN, "SELECT to_regclass('gwas.study')"), [(None,)])
+        self.assertEqual(self.query(ETL_DSN, "SELECT * FROM meta.release"), meta)
+
+    def test_rebuilt_release_beyond_the_kept_places_is_dropped_on_next_promote(self) -> None:
+        self.assertEqual(self.load(), 0)
+        self.assertEqual(self.promote(), 0)
+        for release in ("r2000-01-02", "r2000-01-03", "r2000-01-04"):
+            self.assertEqual(self.load(make_snapshot(self.tmp, release, unchanged)), 0)
+            self.assertEqual(self.promote(release), 0)
+        self.assertFalse(self.schema_exists())
+        meta = "SELECT * FROM meta.release WHERE release_id = %s"
+        before = self.query(ETL_DSN, meta, (RELEASE,))
+        self.assertEqual(self.rebuild(), 0)
+        self.assertTrue(self.schema_exists())
+        self.assertEqual(self.load(make_snapshot(self.tmp, "r2000-01-05", unchanged)), 0)
+        self.assertEqual(self.promote("r2000-01-05"), 0)
+        self.assertFalse(self.schema_exists())
+        self.assertEqual(self.query(ETL_DSN, meta, (RELEASE,)), before)
+
     def test_analyst_ro_reads_but_cannot_write(self) -> None:
         self.assertEqual(self.load(), 0)
         self.assertEqual(self.promote(), 0)
