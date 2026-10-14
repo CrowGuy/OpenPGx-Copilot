@@ -34,6 +34,7 @@ ANALYST_DSN = os.environ.get(
 SNAPSHOT = ROOT / "tests" / "fixtures" / "r2000-01-01"
 STUDIES_FILE = "gwas-catalog-v1.0.3.1-studies-r2000-01-01.tsv"
 ASSOCIATIONS_FILE = "gwas-catalog-download-associations-alt-full.tsv"
+ANCESTRIES_FILE = "gwas-catalog-v1.0.3.1-ancestries-r2000-01-01.tsv"
 CONTRACT = ROOT / "raw" / "gwas_catalog" / "contracts" / "gwas_curation_contract.json"
 RELEASE = "r2000-01-01"
 SCHEMA = "gwas_r2000_01_01"
@@ -85,6 +86,14 @@ def studies_with_violations(header: list[str], rows: list[list[str]]) -> None:
 def association_with_unknown_study(header: list[str], rows: list[list[str]]) -> None:
     """Line 3 (rs416486) points at a study that is not in published_studies."""
     rows[1][header.index("STUDY ACCESSION")] = "GCST999999"
+
+
+def ancestries_with_violations(header: list[str], rows: list[list[str]]) -> None:
+    """Lines 3-5: a STAGE outside the enum, an empty STAGE and a study that is not in published_studies."""
+    col = header.index
+    rows[1][col("STAGE")] = "Initial"
+    rows[2][col("STAGE")] = " "
+    rows[3][col("STUDY ACCESSION")] = "GCST999999"
 
 
 @unittest.skipIf(psycopg is None, "psycopg is not installed")
@@ -218,7 +227,8 @@ class ReleaseLoaderTest(unittest.TestCase):
         rows = self.query(
             ETL_DSN,
             "SELECT source_file, source_line, source_column, reason, value "
-            "FROM gwas_r2000_01_02.rejected_row ORDER BY source_line",
+            "FROM gwas_r2000_01_02.rejected_row WHERE source_file = %s ORDER BY source_line",
+            (STUDIES_FILE,),
         )
         self.assertEqual(
             rows,
@@ -393,6 +403,56 @@ class ReleaseLoaderTest(unittest.TestCase):
             ETL_DSN, "SELECT load_report -> 'published_associations' -> 'nulled_values' FROM meta.release"
         )[0]
         self.assertEqual(nulled, {"OR or BETA": 1, "RISK ALLELE FREQUENCY": 1})
+
+    def test_study_ancestry_by_stage_queryable_from_gwas(self) -> None:
+        self.assertEqual(self.load(), 0)
+        self.assertEqual(self.promote(), 0)
+        rows = self.query(
+            ANALYST_DSN,
+            "SELECT s.disease_trait, a.stage, a.number_of_individuals, a.broad_ancestral_category "
+            "FROM gwas.study s JOIN gwas.ancestry a USING (study_accession) "
+            "WHERE s.study_accession = 'GCST006142' ORDER BY a.stage",
+        )
+        trait = "Lumbar spine bone mineral density"
+        self.assertEqual(rows, [(trait, "initial", 1380, "European"), (trait, "replication", 30970, "NR")])
+
+    def test_study_without_ancestry_loads(self) -> None:
+        self.assertEqual(self.load(), 0)
+        rows = self.query(
+            ETL_DSN,
+            f"SELECT s.study_accession, count(a.ancestry_id) FROM {SCHEMA}.study s "
+            f"LEFT JOIN {SCHEMA}.ancestry a USING (study_accession) WHERE s.study_accession = 'GCST010197' "
+            f"GROUP BY s.study_accession",
+        )
+        self.assertEqual(rows, [("GCST010197", 0)])
+        self.assertEqual(self.query(ETL_DSN, f"SELECT count(DISTINCT ancestry_id) FROM {SCHEMA}.ancestry"), [(41,)])
+
+    def test_whitespace_only_ancestry_values_are_null(self) -> None:
+        self.assertEqual(self.load(), 0)
+        rows = self.query(ETL_DSN, f"SELECT count(*), count(ancestry_descriptor) FROM {SCHEMA}.ancestry")
+        self.assertEqual(rows, [(41, 0)])
+        (nulled,) = self.query(
+            ETL_DSN, "SELECT load_report -> 'published_ancestries' -> 'nulled_values' FROM meta.release"
+        )[0]
+        self.assertEqual(nulled, {})
+
+    def test_invalid_stage_and_unknown_study_become_rejected_rows(self) -> None:
+        snapshot = make_snapshot(self.tmp, "r2000-01-02", ancestries_with_violations, ANCESTRIES_FILE)
+        self.assertEqual(self.load(snapshot, self.lenient_contract()), 0)
+        rows = self.query(
+            ETL_DSN,
+            "SELECT source_file, source_line, source_column, reason, value "
+            "FROM gwas_r2000_01_02.rejected_row ORDER BY source_line",
+        )
+        self.assertEqual(
+            rows,
+            [
+                (ANCESTRIES_FILE, 3, "STAGE", "enum_mismatch", "Initial"),
+                (ANCESTRIES_FILE, 4, "STAGE", "empty", " "),
+                (ANCESTRIES_FILE, 5, "STUDY ACCESSION", "foreign_key", "GCST999999"),
+            ],
+        )
+        self.assertEqual(self.query(ETL_DSN, "SELECT count(*) FROM gwas_r2000_01_02.ancestry"), [(38,)])
 
 
 if __name__ == "__main__":

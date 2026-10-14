@@ -96,6 +96,30 @@ CREATE TABLE association_snp (
 CREATE INDEX ON association_snp (rsid);
 CREATE INDEX ON association_snp (chr, pos);
 
+-- One row per published_ancestries source row; a study may have none (known source condition).
+-- The stage CHECK mirrors the CurationContract enum as a safety net behind the loader's Rejected Rows.
+CREATE TABLE ancestry (
+    ancestry_id bigint PRIMARY KEY,
+    study_accession text NOT NULL REFERENCES study,
+    pubmed_id integer,
+    first_author text,
+    publication_date date,
+    initial_sample_description text,
+    replication_sample_description text,
+    stage text NOT NULL CHECK (stage IN ('initial', 'replication')),
+    number_of_individuals integer,
+    broad_ancestral_category text,
+    country_of_origin text,
+    country_of_recruitment text,
+    additional_ancestry_description text,
+    ancestry_descriptor text,
+    founder_genetically_isolated_population text,
+    number_of_cases integer,
+    number_of_controls integer,
+    sample_description text
+);
+CREATE INDEX ON ancestry (study_accession);
+
 -- Rejected Rows (ADR-0007): one row per Required Field violation of a source row kept out of the Curated Layer.
 CREATE TABLE rejected_row (
     source_file text NOT NULL,
