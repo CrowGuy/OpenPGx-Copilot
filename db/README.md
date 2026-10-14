@@ -20,7 +20,8 @@ pip install "psycopg[binary]"
 export PGHOST=127.0.0.1 PGDATABASE=openpgx PGUSER=etl_writer PGPASSWORD=etl_writer   # 或使用 ~/.pgpass
 python tools/gwas_release_loader.py load \
   --snapshot-dir raw/gwas_catalog/r2026-08-22 \
-  --curation-contract raw/gwas_catalog/contracts/gwas_curation_contract.json
+  --curation-contract raw/gwas_catalog/contracts/gwas_curation_contract.json \
+  --dataset-contract raw/gwas_catalog/contracts/gwas_dataset_contract.json
 python tools/gwas_release_loader.py promote --release r2026-08-22 --approved-by <你的名字>
 ```
 

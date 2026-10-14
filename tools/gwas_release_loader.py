@@ -6,7 +6,9 @@ promote: Candidate -> Active Release; `gwas` views point at it, the previous Act
 
 Connection: --dsn, or the standard libpq PG* environment variables / ~/.pgpass when omitted.
 Rows violating the CurationContract become Rejected Rows; over the Rejection Threshold the whole load fails (ADR-0007).
-Scope: studies, associations and ancestries so far (#4, #5, #7, #9); validation (#6) and traits (#8) follow.
+Before connecting, load checks its inputs (#6): the RawSnapshot's _SUCCESS marker and checksums, the CurationContract's
+shape, and each loaded file's Load Policy and header (DatasetContract) and format_version (CurationContract).
+Scope: studies, associations and ancestries so far (#4, #5, #7, #9); traits (#8) follow.
 """
 
 from __future__ import annotations
@@ -15,6 +17,8 @@ import argparse
 import collections
 import datetime as dt
 import decimal
+import hashlib
+import itertools
 import json
 import math
 from pathlib import Path
@@ -28,7 +32,7 @@ from psycopg import Copy, sql
 from psycopg.copy import FileWriter
 from psycopg.types.json import Jsonb
 
-from gwas_first_pass_profiler import INTEGER_RE, ProfilerError, iter_rows, read_header, verify_snapshot
+from gwas_first_pass_profiler import INTEGER_RE, ProfilerError, iter_rows, load_json, read_header, verify_snapshot
 
 RELEASE_SCHEMA_DDL = Path(__file__).resolve().parents[1] / "db" / "release_schema.sql"
 RELEASE_ID_RE = re.compile(r"^r[0-9]{4}-[0-9]{2}-[0-9]{2}$")
@@ -36,6 +40,7 @@ ISO_DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 DECIMAL_RE = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$")
 P_VALUE_RE = re.compile(r"^(\d+(?:\.\d+)?)E-(\d+)$")
 INT4_MIN, INT4_MAX = -(2**31), 2**31 - 1
+CURATED_TYPES = {"text", "integer", "decimal", "flag_01", "p_value", "date", "yes_no"}
 # Loaded in this order so foreign_key rules see the datasets they reference; traits (#8) follow.
 LOADED_ROLES = ("published_studies", "published_associations", "published_ancestries")
 # keep_full_duplicate_rows and studies_without_ancestry_allowed only declare that the loader enforces nothing.
@@ -68,6 +73,61 @@ def schema_for(release_id: str) -> str:
     if not RELEASE_ID_RE.fullmatch(release_id):
         raise LoaderError(f"Release id must look like r<YYYY-MM-DD>: {release_id!r}")
     return "gwas_" + release_id.replace("-", "_")
+
+
+def check_curation_contract(contract: Any) -> list[dict[str, Any]]:
+    """Return the LOADED_ROLES datasets, or fail before anything is written if the contract lacks what the loader reads.
+
+    Shape only: which dataset rules and split policies are supported is checked where they are applied, and
+    format_version is compared with the RawSnapshot in load().
+    """
+
+    def require(ok: bool, problem: str) -> None:
+        if not ok:
+            raise LoaderError(f"Malformed CurationContract: {problem}")
+
+    require(isinstance(contract, dict), "root must be an object")
+    require(type(contract.get("version")) is int, "version must be an integer")
+    require(
+        bool(contract.get("genome_build")) and isinstance(contract["genome_build"], str),
+        "genome_build must be a non-empty string",
+    )
+    require(isinstance(contract.get("datasets"), list), "datasets must be an array")
+    datasets = []
+    for role in LOADED_ROLES:
+        matches = [d for d in contract["datasets"] if isinstance(d, dict) and d.get("role") == role]
+        require(len(matches) == 1, f"needs exactly one dataset with role {role}")
+        dataset = matches[0]
+        threshold = dataset.get("rejection_threshold")
+        require(
+            isinstance(threshold, (int, float)) and not isinstance(threshold, bool) and 0 <= threshold <= 1,
+            f"{role}.rejection_threshold must be a number between 0 and 1",
+        )
+        require(isinstance(dataset.get("curated_table"), str), f"{role}.curated_table must be a string")
+        for key in ("dataset_rules", "columns"):
+            require(
+                isinstance(dataset.get(key), list) and all(isinstance(item, dict) for item in dataset[key]),
+                f"{role}.{key} must be an array of objects",
+            )
+        for column in dataset["columns"]:
+            name = f"{role}.{column.get('source_column')}"
+            for key, kind in (("source_column", str), ("curated_column", str), ("null_tokens", list)):
+                require(isinstance(column.get(key), kind), f"{name}.{key} must be a {kind.__name__}")
+            require(column.get("keep_text") in (None, True, False), f"{name}.keep_text must be a bool or null")
+            require(
+                column.get("curated_type") in CURATED_TYPES,
+                f"{name}: unsupported curated_type {column.get('curated_type')!r}",
+            )
+            require(
+                column.get("on_parse_failure") in ("reject_row", "null"),
+                f"{name}: unsupported on_parse_failure {column.get('on_parse_failure')!r}",
+            )
+            require(
+                column.get("split_rule") is None or isinstance(column["split_rule"], dict),
+                f"{name}.split_rule must be an object or null",
+            )
+        datasets.append(dataset)
+    return datasets
 
 
 def parse_int4(value: str) -> int | None:
@@ -295,12 +355,48 @@ def load_dataset(
 
 
 def load(args: argparse.Namespace) -> str:
-    manifest, _, files = verify_snapshot(args.snapshot_dir, set(LOADED_ROLES))
+    # Hash and parse the same bytes, so meta records the contract that was actually applied.
+    try:
+        contract_bytes = args.curation_contract.read_bytes()
+        contract = json.loads(contract_bytes)
+    except OSError as exc:
+        raise LoaderError(f"Cannot read CurationContract {args.curation_contract}: {exc}") from exc
+    except ValueError as exc:
+        raise LoaderError(f"Malformed CurationContract: not JSON: {exc}") from exc
+    datasets = check_curation_contract(contract)
+    manifest, manifest_sha, files = verify_snapshot(args.snapshot_dir, set(LOADED_ROLES))
     release_id = manifest["snapshot_id"]
     schema = schema_for(release_id)
-    contract = json.loads(args.curation_contract.read_text(encoding="utf-8"))
-    datasets = [next(d for d in contract["datasets"] if d["role"] == role) for role in LOADED_ROLES]
-    filenames = {f["role"]: f["filename"] for f in files}
+    dataset_contract = load_json(args.dataset_contract, "DatasetContract")
+    endpoints = {endpoint["role"]: endpoint for endpoint in dataset_contract["endpoints"]}
+    files_by_role = {f["role"]: f for f in files}
+    filenames = {role: f["filename"] for role, f in files_by_role.items()}
+    for dataset in datasets:
+        role = dataset["role"]
+        file, filename = files_by_role[role], filenames[role]
+        endpoint = endpoints.get(role)
+        if endpoint is None:
+            raise LoaderError(f"{role}: absent from the DatasetContract")
+        if endpoint["load_policy"] != "load_to_curated":
+            raise LoaderError(
+                f"{role}: Load Policy is {endpoint['load_policy']!r} in the DatasetContract, not load_to_curated"
+            )
+        if file.get("format_version") != dataset.get("format_version"):
+            raise LoaderError(
+                f"{filename}: format_version {file.get('format_version')!r} "
+                f"does not match CurationContract {dataset.get('format_version')!r}"
+            )
+        header = read_header(args.snapshot_dir / filename)
+        if header != endpoint["expected_header"]:
+            column, (actual, expected) = next(
+                (i, pair)
+                for i, pair in enumerate(itertools.zip_longest(header, endpoint["expected_header"]), 1)
+                if pair[0] != pair[1]
+            )
+            raise LoaderError(
+                f"{filename}: header does not match DatasetContract expected_header "
+                f"at column {column}: {actual!r} instead of {expected!r}"
+            )
     loaded_keys: dict[str, set[Any]] = {
         rule["references"]: set()
         for dataset in datasets
@@ -311,7 +407,17 @@ def load(args: argparse.Namespace) -> str:
     # One transaction: `loading` is visible only inside it; any failure rolls back the schema and meta row.
     # The DDL PRIMARY KEY / REFERENCES constraints stay as a safety net behind the loader's dataset rules.
     with psycopg.connect(args.dsn) as conn:
-        conn.execute("INSERT INTO meta.release (release_id, status) VALUES (%s, 'loading')", (release_id,))
+        conn.execute(
+            "INSERT INTO meta.release (release_id, status, manifest_sha256, curation_contract_version, "
+            "curation_contract_sha256, genome_build) VALUES (%s, 'loading', %s, %s, %s, %s)",
+            (
+                release_id,
+                manifest_sha,
+                contract["version"],
+                hashlib.sha256(contract_bytes).hexdigest(),
+                contract["genome_build"],
+            ),
+        )
         conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
         conn.execute(sql.SQL("SET LOCAL search_path TO {}").format(sql.Identifier(schema)))
         conn.execute(RELEASE_SCHEMA_DDL.read_text(encoding="utf-8"))
@@ -360,6 +466,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     load_parser = commands.add_parser("load", help="Load a RawSnapshot as a candidate Release.")
     load_parser.add_argument("--snapshot-dir", required=True, type=Path)
     load_parser.add_argument("--curation-contract", required=True, type=Path)
+    load_parser.add_argument("--dataset-contract", required=True, type=Path)
     promote_parser = commands.add_parser("promote", help="Promote a candidate Release to Active Release.")
     promote_parser.add_argument("--release", required=True, help="Release id, e.g. r2026-08-22")
     promote_parser.add_argument("--approved-by", required=True)

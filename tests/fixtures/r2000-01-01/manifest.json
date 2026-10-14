@@ -68,6 +68,28 @@
       "role": "published_ancestries",
       "sha256": "0139522cde27f65eed4f57f93dd023802be2b3142c9ab54b893948252d121b00",
       "source_url": "https://www.ebi.ac.uk/gwas/api/search/downloads/ancestries/v1.0.3.1"
+    },
+    {
+      "byte_size": 1519,
+      "column_count": 24,
+      "data_row_count": 2,
+      "downloaded_at": "2026-09-03T01:19:09Z",
+      "duplicate_header_names": [],
+      "filename": "gwas-catalog-v1.0.3.1-unpublished-studies-r2000-01-01.tsv",
+      "final_line_has_newline": true,
+      "format_version": "v1.0.3.1",
+      "header_sha256": "074a5450eac25d3e86a822e29e43c307f741f64fd10b5558f0656460df521e9f",
+      "http_response_headers": {
+        "content-type": "text/tsv"
+      },
+      "http_status": 200,
+      "load_policy": "raw_only",
+      "malformed_examples": [],
+      "malformed_row_count": 0,
+      "requested_url": "https://www.ebi.ac.uk/gwas/api/search/downloads/unpublished_studies/v1.0.3.1",
+      "role": "unpublished_studies",
+      "sha256": "d2b4c40e6a66436fd808739dd115ff067c2a9a1db6520f5a6e0d6583654b5cd4",
+      "source_url": "https://www.ebi.ac.uk/gwas/api/search/downloads/unpublished_studies/v1.0.3.1"
     }
   ],
   "manifest_created_at": "2026-09-03T01:19:22Z",
@@ -94,7 +116,8 @@
   "scope_policy": {
     "published_ancestries": "load_to_curated",
     "published_associations": "load_to_curated",
-    "published_studies": "load_to_curated"
+    "published_studies": "load_to_curated",
+    "unpublished_studies": "raw_only"
   },
   "snapshot_content_sha256": null,
   "snapshot_id": "r2000-01-01",
@@ -102,7 +125,7 @@
     "errors": [],
     "status": "passed",
     "warnings": [
-      "test fixture: studies, associations and ancestries; association STUDY ACCESSION rewritten to fixture studies; GCST010197 has no ancestry rows"
+      "test fixture: studies, associations and ancestries; association STUDY ACCESSION rewritten to fixture studies; GCST010197 has no ancestry rows; unpublished studies are raw_only and never loaded"
     ]
   }
 }
