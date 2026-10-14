@@ -3,7 +3,7 @@
 
 load:    RawSnapshot + CurationContract -> gwas_r<YYYY_MM_DD> schema, Release Status `candidate`.
 promote: Candidate -> Active Release; `gwas` views point at it, the previous Active Release is `retired`, and retired
-         Release schemas beyond the KEPT_RELEASES most recent are dropped. meta keeps every Release's row (ADR-0005).
+         Release schemas beyond the KEPT_RELEASES most recently promoted are dropped. meta keeps every Release's row (ADR-0005).
 
 Connection: --dsn, or the standard libpq PG* environment variables / ~/.pgpass when omitted.
 Rows violating the CurationContract become Rejected Rows; over the Rejection Threshold the whole load fails (ADR-0007).
@@ -533,14 +533,15 @@ def promote(args: argparse.Namespace) -> str:
                     sql.Identifier(table), sql.Identifier(schema)
                 )
             )
-        # Ranked by release date (r<YYYY-MM-DD> sorts as text) among all Releases, including already dropped ones.
-        # ponytail: only retired schemas are dropped, so a never-promoted candidate is kept until someone decides.
+        # Only Releases that were ever promoted take one of the KEPT_RELEASES places, ranked by promote time, so the
+        # previous Active Release always stays; already dropped ones still count. Candidates are never dropped.
         existing = {name for (name,) in conn.execute("SELECT nspname FROM pg_namespace").fetchall()}
         dropped = [
             schema_for(release_id)
             for (release_id,) in conn.execute(
                 "SELECT release_id FROM meta.release WHERE status = 'retired' AND release_id NOT IN "
-                "(SELECT release_id FROM meta.release ORDER BY release_id DESC LIMIT %s)",
+                "(SELECT release_id FROM meta.release WHERE status IN ('active', 'retired') "
+                "ORDER BY approved_at DESC LIMIT %s)",
                 (KEPT_RELEASES,),
             ).fetchall()
             if schema_for(release_id) in existing

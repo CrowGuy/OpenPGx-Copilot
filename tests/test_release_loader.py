@@ -414,6 +414,16 @@ class ReleaseLoaderTest(unittest.TestCase):
         self.assertEqual(meta, [(r, "retired", "tester", True) for r in releases[:3]] + [(releases[3], "active", "tester", True)])
         self.assertEqual(self.query(ANALYST_DSN, "SELECT count(*) FROM gwas.study"), [(27,)])
 
+    def test_candidates_neither_count_toward_nor_lose_their_schemas(self) -> None:
+        self.assertEqual(self.load(), 0)
+        self.assertEqual(self.promote(), 0)
+        for release in ("r2000-01-02", "r2000-01-03", "r2000-01-04", "r2000-01-05"):
+            self.assertEqual(self.load(make_snapshot(self.tmp, release, unchanged)), 0)
+        self.assertEqual(self.promote("r2000-01-05"), 0)
+        schemas = self.query(ETL_DSN, "SELECT count(*) FROM pg_namespace WHERE nspname LIKE %s", ("gwas\\_r%",))
+        self.assertEqual(schemas, [(5,)])
+        self.assertEqual(self.query(ETL_DSN, "SELECT to_regnamespace(%s) IS NOT NULL", (SCHEMA,)), [(True,)])
+
     def test_failed_promote_changes_nothing(self) -> None:
         self.assertEqual(self.load(), 0)
         self.assertEqual(self.promote(), 0)
