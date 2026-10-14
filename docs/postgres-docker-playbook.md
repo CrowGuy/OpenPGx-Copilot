@@ -485,7 +485,8 @@ docker compose exec -T -u postgres db pg_restore -d openpgx --clean --if-exists 
 
 1. 先照第 9.1 節套用 migration，再照第 5 節設定密碼。備份檔只有 `meta`，不含角色、預設授權與 `gwas` schema。
 2. 再執行上面的 `pg_restore`。
-3. 這時 `meta` 的紀錄完整，但 Release schema 不在，`gwas` 也沒有 view，團隊查不到資料。依 ETL playbook 從 RawSnapshot 重建 Release（#14）。不要刪掉 `meta` 紀錄再重新 load：核准紀錄會因此遺失（ADR-0008）。
+3. 這時 `meta` 的紀錄完整，但 Release schema 不在，`gwas` 也沒有 view，團隊查不到資料。用 `gwas_release_loader.py rebuild` 從 RawSnapshot 重建 Release（`db/README.md` 的「Rebuild」一節），先重建 Active Release，`gwas` 的 view 會一起建回來；其他 Release 需要時再重建。不要刪掉 `meta` 紀錄再重新 load：核准紀錄會因此遺失（ADR-0008）。
+4. 最近 Promote 過的 3 個以外的 `retired` Release，重建後只保留到下一次 Promote。不要拿它當長期依賴（例如 Release Pin），需要時再重建。
 
 **還原從來沒有演練過的備份，等於沒有備份。** 每次改了 `meta` 的結構之後，至少演練一次還原。
 
@@ -501,7 +502,7 @@ docker compose exec -T -u postgres db pg_restore -d openpgx --clean --if-exists 
 | 看資源用量 | `docker stats` |
 | 套用同一個 major 版本的安全更新（例如 18.1 → 18.2） | `docker compose pull && docker compose up -d` |
 
-**Major 版本升級**（例如 18 → 19）**不能只改 image tag**，因為資料檔格式不相容。正確做法：用 `pg_dumpall` 匯出 → 用新版本建立新的 volume → 匯入。對本專案來說更簡單的做法是：備份 `meta` → 用新版本建一個空的資料庫 → 依第 12 節「還原到全新的空資料庫」的順序套用 migration、設定密碼、還原 `meta` → 從 RawSnapshot 重建 Release（#14）。
+**Major 版本升級**（例如 18 → 19）**不能只改 image tag**，因為資料檔格式不相容。正確做法：用 `pg_dumpall` 匯出 → 用新版本建立新的 volume → 匯入。對本專案來說更簡單的做法是：備份 `meta` → 用新版本建一個空的資料庫 → 依第 12 節「還原到全新的空資料庫」的順序套用 migration、設定密碼、還原 `meta` → 用 `gwas_release_loader.py rebuild` 從 RawSnapshot 重建 Release（第 12 節）。
 
 > ⚠️ `docker compose down -v` 會**連 volume 一起刪除**，也就是刪掉整個資料庫。除非確定要從頭重建，否則不要加 `-v`。
 

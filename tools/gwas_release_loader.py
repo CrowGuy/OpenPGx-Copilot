@@ -4,6 +4,8 @@
 load:    RawSnapshot + CurationContract -> gwas_r<YYYY_MM_DD> schema, Release Status `candidate`.
 promote: Candidate -> Active Release; `gwas` views point at it, the previous Active Release is `retired`, and retired
          Release schemas beyond the KEPT_RELEASES most recently promoted are dropped. meta keeps every Release's row (ADR-0005).
+rebuild: an `active` or `retired` Release whose schema is gone -> its schema again, from the RawSnapshot and
+         CurationContract meta recorded; its meta row and approval stay as they are (ADR-0008).
 
 Connection: --dsn, or the standard libpq PG* environment variables / ~/.pgpass when omitted.
 Rows violating the CurationContract become Rejected Rows; over the Rejection Threshold the whole load fails (ADR-0007).
@@ -423,16 +425,65 @@ def load_dataset(
     return report
 
 
-def load(args: argparse.Namespace) -> str:
+def read_curation_contract(path: Path) -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+    """Return (contract, its sha256, its loaded datasets)."""
     # Hash and parse the same bytes, so meta records the contract that was actually applied.
     try:
-        contract_bytes = args.curation_contract.read_bytes()
+        contract_bytes = path.read_bytes()
         contract = json.loads(contract_bytes)
     except OSError as exc:
-        raise LoaderError(f"Cannot read CurationContract {args.curation_contract}: {exc}") from exc
+        raise LoaderError(f"Cannot read CurationContract {path}: {exc}") from exc
     except ValueError as exc:
         raise LoaderError(f"Malformed CurationContract: not JSON: {exc}") from exc
     datasets = loaded_datasets(contract)
+    return contract, hashlib.sha256(contract_bytes).hexdigest(), datasets
+
+
+def build_release_schema(
+    conn: psycopg.Connection[Any],
+    schema: str,
+    snapshot_dir: Path,
+    files: list[dict[str, Any]],
+    datasets: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Create `schema` and load every dataset into it; returns the load report. The caller owns the transaction."""
+    files_by_role = {f["role"]: f for f in files}
+    loaded_keys: dict[str, set[Any]] = {
+        rule["references"]: set()
+        for dataset in datasets
+        for rule in dataset["dataset_rules"]
+        if rule["rule"] == "foreign_key"
+    }
+    # The DDL PRIMARY KEY / REFERENCES constraints stay as a safety net behind the loader's dataset rules.
+    conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+    conn.execute(sql.SQL("SET LOCAL search_path TO {}").format(sql.Identifier(schema)))
+    conn.execute(RELEASE_SCHEMA_DDL.read_text(encoding="utf-8"))
+    return {
+        dataset["role"]: load_dataset(
+            conn, snapshot_dir / files_by_role[dataset["role"]]["filename"], dataset, loaded_keys
+        )
+        for dataset in datasets
+    }
+
+
+def point_gwas_views(conn: psycopg.Connection[Any], schema: str) -> None:
+    """Replace the `gwas` views with one per table of `schema`."""
+    for (view,) in conn.execute(
+        "SELECT table_name FROM information_schema.views WHERE table_schema = 'gwas'"
+    ).fetchall():
+        conn.execute(sql.SQL("DROP VIEW gwas.{}").format(sql.Identifier(view)))
+    for (table,) in conn.execute(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = %s", (schema,)
+    ).fetchall():
+        conn.execute(
+            sql.SQL("CREATE VIEW gwas.{0} AS SELECT * FROM {1}.{0}").format(
+                sql.Identifier(table), sql.Identifier(schema)
+            )
+        )
+
+
+def load(args: argparse.Namespace) -> str:
+    contract, contract_sha, datasets = read_curation_contract(args.curation_contract)
     manifest, manifest_sha, files = verify_snapshot(args.snapshot_dir, set(LOADED_ROLES))
     release_id = manifest["snapshot_id"]
     schema = schema_for(release_id)
@@ -467,15 +518,8 @@ def load(args: argparse.Namespace) -> str:
                 f"{filename}: header does not match DatasetContract expected_header "
                 f"at column {column}: {actual!r} instead of {expected!r}"
             )
-    loaded_keys: dict[str, set[Any]] = {
-        rule["references"]: set()
-        for dataset in datasets
-        for rule in dataset["dataset_rules"]
-        if rule["rule"] == "foreign_key"
-    }
 
     # One transaction: `loading` is visible only inside it; any failure rolls back the schema and meta row.
-    # The DDL PRIMARY KEY / REFERENCES constraints stay as a safety net behind the loader's dataset rules.
     with psycopg.connect(args.dsn) as conn:
         try:
             conn.execute(
@@ -485,7 +529,7 @@ def load(args: argparse.Namespace) -> str:
                     release_id,
                     manifest_sha,
                     contract["version"],
-                    hashlib.sha256(contract_bytes).hexdigest(),
+                    contract_sha,
                     contract["genome_build"],
                 ),
             )
@@ -493,15 +537,7 @@ def load(args: argparse.Namespace) -> str:
             raise LoaderError(
                 f"Release {release_id} already exists in meta.release; Releases are never reloaded"
             ) from None
-        conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
-        conn.execute(sql.SQL("SET LOCAL search_path TO {}").format(sql.Identifier(schema)))
-        conn.execute(RELEASE_SCHEMA_DDL.read_text(encoding="utf-8"))
-        report = {
-            dataset["role"]: load_dataset(
-                conn, args.snapshot_dir / files_by_role[dataset["role"]]["filename"], dataset, loaded_keys
-            )
-            for dataset in datasets
-        }
+        report = build_release_schema(conn, schema, args.snapshot_dir, files, datasets)
         conn.execute(
             "UPDATE meta.release SET status = 'candidate', load_report = %s WHERE release_id = %s",
             (Jsonb(report), release_id),
@@ -521,18 +557,7 @@ def promote(args: argparse.Namespace) -> str:
         ).rowcount
         if updated != 1:
             raise LoaderError(f"{args.release} is not a candidate Release")
-        for (view,) in conn.execute(
-            "SELECT table_name FROM information_schema.views WHERE table_schema = 'gwas'"
-        ).fetchall():
-            conn.execute(sql.SQL("DROP VIEW gwas.{}").format(sql.Identifier(view)))
-        for (table,) in conn.execute(
-            "SELECT table_name FROM information_schema.tables WHERE table_schema = %s", (schema,)
-        ).fetchall():
-            conn.execute(
-                sql.SQL("CREATE VIEW gwas.{0} AS SELECT * FROM {1}.{0}").format(
-                    sql.Identifier(table), sql.Identifier(schema)
-                )
-            )
+        point_gwas_views(conn, schema)
         # Only Releases that were ever promoted take one of the KEPT_RELEASES places, ranked by promote time, so the
         # previous Active Release always stays; already dropped ones still count. Candidates are never dropped.
         existing = {name for (name,) in conn.execute("SELECT nspname FROM pg_namespace").fetchall()}
@@ -554,8 +579,45 @@ def promote(args: argparse.Namespace) -> str:
     return schema
 
 
+def rebuild(args: argparse.Namespace) -> str:
+    schema = schema_for(args.release)
+    contract, contract_sha, datasets = read_curation_contract(args.curation_contract)
+    manifest, manifest_sha, files = verify_snapshot(args.snapshot_dir, set(LOADED_ROLES))
+    if manifest["snapshot_id"] != args.release:
+        raise LoaderError(f"RawSnapshot {manifest['snapshot_id']} is not Release {args.release}")
+    # One transaction; every check below runs before anything is written, and meta.release is never changed.
+    with psycopg.connect(args.dsn) as conn:
+        row = conn.execute(
+            "SELECT status, manifest_sha256, curation_contract_version, curation_contract_sha256 "
+            "FROM meta.release WHERE release_id = %s FOR UPDATE",
+            (args.release,),
+        ).fetchone()
+        # A candidate never lost its schema (promote does not drop candidates); reload a failed one instead.
+        if row is None or row[0] not in ("active", "retired"):
+            raise LoaderError(f"{args.release} is not an active or retired Release in meta.release")
+        status, *recorded = row
+        for name, actual, expected in zip(
+            ("RawSnapshot manifest sha256", "CurationContract version", "CurationContract sha256"),
+            (manifest_sha, contract["version"], contract_sha),
+            recorded,
+        ):
+            if actual != expected:
+                raise LoaderError(
+                    f"{name} {actual} does not match {expected} recorded in meta.release for {args.release}"
+                )
+        if conn.execute("SELECT to_regnamespace(%s)", (schema,)).fetchone() != (None,):
+            raise LoaderError(f"{schema} already exists; rebuild only restores a dropped Release schema")
+        build_release_schema(conn, schema, args.snapshot_dir, files, datasets)
+        if status == "active":
+            point_gwas_views(conn, schema)
+    # ponytail: a rebuilt retired Release keeps its old approved_at, so it is dropped again on the next promote if it
+    # is beyond the KEPT_RELEASES places (#14); rebuild it again when needed.
+    log(f"Rebuilt {args.release} ({status}) into {schema}")
+    return schema
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Load and promote GWAS Data Platform Releases.")
+    parser = argparse.ArgumentParser(description="Load, promote and rebuild GWAS Data Platform Releases.")
     commands = parser.add_subparsers(dest="command", required=True)
     load_parser = commands.add_parser("load", help="Load a RawSnapshot as a candidate Release.")
     load_parser.add_argument("--snapshot-dir", required=True, type=Path)
@@ -564,7 +626,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     promote_parser = commands.add_parser("promote", help="Promote a candidate Release to Active Release.")
     promote_parser.add_argument("--release", required=True, help="Release id, e.g. r2026-08-22")
     promote_parser.add_argument("--approved-by", required=True)
-    for sub in (load_parser, promote_parser):
+    rebuild_parser = commands.add_parser(
+        "rebuild", help="Rebuild the dropped schema of an active or retired Release from its RawSnapshot."
+    )
+    rebuild_parser.add_argument("--release", required=True, help="Release id, e.g. r2026-08-22")
+    rebuild_parser.add_argument("--snapshot-dir", required=True, type=Path)
+    rebuild_parser.add_argument("--curation-contract", required=True, type=Path)
+    for sub in (load_parser, promote_parser, rebuild_parser):
         sub.add_argument("--dsn", default="", help="libpq connection string; defaults to PG* environment variables")
     return parser.parse_args(argv)
 
@@ -572,7 +640,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        print({"load": load, "promote": promote}[args.command](args))
+        print({"load": load, "promote": promote, "rebuild": rebuild}[args.command](args))
     except (LoaderError, ProfilerError, ConfigurationError, psycopg.Error) as exc:
         log(f"ERROR: {exc}")
         return 2
