@@ -67,7 +67,7 @@ def make_snapshot(directory: Path, release: str, edit) -> Path:
     return snapshot
 
 
-def bad_studies(header: list[str], rows: list[list[str]]) -> None:
+def studies_with_violations(header: list[str], rows: list[list[str]]) -> None:
     """2 Required Field violations (lines 3-4) and 3 non-Required parse failures (line 5) out of 27 rows."""
     col = header.index
     rows[1][col("STUDY ACCESSION")] = ""
@@ -177,7 +177,7 @@ class ReleaseLoaderTest(unittest.TestCase):
         self.assertEqual(row, [("2018-08-22", 29860282, True, False, "NA", None)])
 
     def test_required_field_violations_become_rejected_rows(self) -> None:
-        self.assertEqual(self.load(make_snapshot(self.tmp, "r2000-01-02", bad_studies), self.lenient_contract()), 0)
+        self.assertEqual(self.load(make_snapshot(self.tmp, "r2000-01-02", studies_with_violations), self.lenient_contract()), 0)
         rows = self.query(
             ETL_DSN,
             "SELECT source_file, source_line, source_column, reason, value "
@@ -193,7 +193,7 @@ class ReleaseLoaderTest(unittest.TestCase):
         self.assertEqual(self.query(ETL_DSN, "SELECT count(*) FROM gwas_r2000_01_02.study"), [(25,)])
 
     def test_non_required_parse_failure_is_null_and_row_is_kept(self) -> None:
-        self.assertEqual(self.load(make_snapshot(self.tmp, "r2000-01-02", bad_studies), self.lenient_contract()), 0)
+        self.assertEqual(self.load(make_snapshot(self.tmp, "r2000-01-02", studies_with_violations), self.lenient_contract()), 0)
         row = self.query(
             ETL_DSN,
             "SELECT pubmed_id, publication_date, gxe, disease_trait FROM gwas_r2000_01_02.study "
@@ -202,7 +202,7 @@ class ReleaseLoaderTest(unittest.TestCase):
         self.assertEqual(row, [(None, None, None, "Bone mineral density (total hip)")])
 
     def test_load_report_is_written_to_meta(self) -> None:
-        self.assertEqual(self.load(make_snapshot(self.tmp, "r2000-01-02", bad_studies), self.lenient_contract()), 0)
+        self.assertEqual(self.load(make_snapshot(self.tmp, "r2000-01-02", studies_with_violations), self.lenient_contract()), 0)
         report = self.query(ETL_DSN, "SELECT load_report FROM meta.release WHERE release_id = 'r2000-01-02'")
         expected = {
             "published_studies": {
@@ -220,7 +220,7 @@ class ReleaseLoaderTest(unittest.TestCase):
     def test_rejections_over_threshold_fail_load_without_trace(self) -> None:
         self.assertEqual(self.load(), 0)
         self.assertEqual(self.promote(), 0)
-        self.assertNotEqual(self.load(make_snapshot(self.tmp, "r2000-01-02", bad_studies)), 0)
+        self.assertNotEqual(self.load(make_snapshot(self.tmp, "r2000-01-02", studies_with_violations)), 0)
         self.assertEqual(self.query(ETL_DSN, "SELECT to_regnamespace('gwas_r2000_01_02')"), [(None,)])
         self.assertEqual(self.query(ETL_DSN, "SELECT release_id, status FROM meta.release"), [(RELEASE, "active")])
         self.assertEqual(self.query(ANALYST_DSN, "SELECT count(*) FROM gwas.study"), [(27,)])

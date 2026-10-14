@@ -50,7 +50,7 @@ def parse_value(raw: str, column: dict[str, Any]) -> tuple[Any, str | None]:
     """Apply one CurationContract column rule. Returns (curated value, parse failure reason or None)."""
     value = raw.strip()
     if value == "":
-        return None, None if column["nullable"] else "empty"
+        return None, "empty" if column["on_parse_failure"] == "reject_row" else None
     curated_type = column["curated_type"]
     if curated_type == "text":
         parsed = value
@@ -89,6 +89,9 @@ def load(args: argparse.Namespace) -> str:
     if missing:
         raise LoaderError(f"{path.name} is missing contract columns: {missing}")
     indexes = [header.index(c["source_column"]) for c in columns]
+    # ponytail: no Release table has *_text columns yet; #7 adds keep_text with the association table.
+    if any(c.get("keep_text") for c in columns):
+        raise LoaderError(f"{dataset['role']}: keep_text is not supported yet")
 
     copy_sql = sql.SQL("COPY {}.{} ({}) FROM STDIN").format(
         sql.Identifier(schema),
@@ -119,7 +122,8 @@ def load(args: argparse.Namespace) -> str:
                         nulled[column["source_column"]] += 1
                     values.append(value)
                 if violations:
-                    # ponytail: Rejected Rows are held in memory; fine under any sane threshold.
+                    # ponytail: held in memory until the threshold check; a source format change can make this every row.
+                    # Stream into a temp table if that ever matters.
                     rejected_rows += 1
                     rejected.extend(violations)
                 else:
