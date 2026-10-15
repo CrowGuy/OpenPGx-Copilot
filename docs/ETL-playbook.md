@@ -46,11 +46,11 @@ chmod 600 ~/.pgpass                               # 權限比 600 寬時，libpq
 psql -w -d openpgx -U etl_writer -h 10.0.201.134 -c 'SELECT current_user, inet_client_addr() AS seen_as;'
 ```
 
-- 驗證用 `-w`（不詢問密碼），行為和 loader 一樣：應該看到 `etl_writer` 與 `192.30.0.1`。出現 `fe_sendauth: no password supplied` 代表 loader 讀不到 `~/.pgpass`：檔案不在這個帳號的家目錄、權限太寬，或密碼欄位是空的（`awk -F: '{print NR": user="$4" 密碼長度="length($5)}' ~/.pgpass` 檢查）。
+- 驗證用 `-w`（不詢問密碼），行為和 loader 一樣：應該看到 `etl_writer` 與 `10.0.201.134`。出現 `fe_sendauth: no password supplied` 代表 loader 讀不到 `~/.pgpass`：檔案不在這個帳號的家目錄、權限太寬，或密碼欄位是空的（`awk -F: '{print NR": user="$4" 密碼長度="length($5)}' ~/.pgpass` 檢查）。
 - 這裡用 `>` 覆寫。`~/.pgpass` 裡如果還有其他服務的密碼，改用編輯器只換掉 `etl_writer` 那一行；重複用 `>>` 附加會留下舊的錯誤行，而 libpq 用的是第一個符合的那一行。
 
 - `10.0.201.134` 換成伺服器實際的內網 IP（Docker playbook 第 6 節）。
-- loader 從伺服器本機連線，走 `pg_hba.conf` 的 Docker 閘道規則，只有 `etl_writer` 能這樣連（Docker playbook 第 11.2 節）。
+- loader 從伺服器本機連線，PostgreSQL 看到的來源是伺服器自己的 IP，走 `pg_hba.conf` 的團隊網段規則（Docker playbook 第 11.2 節）。
 - 之後換了 `etl_writer` 的密碼，要同步修改 `~/.pgpass` 那一行。
 
 ---
@@ -245,7 +245,7 @@ echo "exit=$?"
 
 在伺服器上執行第 2 節的狀態總覽：這個 Release 是 `active`，`gwas_points_to` 只有 `gwas_r2026_08_22`。
 
-再從**內網的另一台機器**用團隊成員的身分查詢（伺服器本機不能用 `analyst_ro` 連線，見 Docker playbook 第 11.2 節）：
+再從**內網的另一台機器**用團隊成員的身分查詢，確認團隊成員看得到：
 
 ```bash
 psql "host=10.0.201.134 port=5432 dbname=openpgx user=analyst_ro sslmode=require" \

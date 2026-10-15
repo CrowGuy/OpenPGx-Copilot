@@ -161,7 +161,6 @@ sudo chmod 600 server.key
 local     all       postgres                     peer
 local     all       all                          scram-sha-256
 hostssl   openpgx   all         10.0.201.0/24   scram-sha-256
-hostssl   openpgx   etl_writer  192.30.0.1/32    scram-sha-256
 host      all       all         0.0.0.0/0        reject
 host      all       all         ::/0             reject
 ```
@@ -173,7 +172,7 @@ host      all       all         ::/0             reject
   - 這樣並沒有放寬權限：能執行 `docker compose exec` 的人本來就等同伺服器的 root，可以直接讀密碼檔。這一行讓維運指令和 cron 備份不需要輸入密碼。
   - 第 3 行：其他角色從 container 內部連線時，仍然要輸入密碼。
 - **第 4 行**：團隊成員只能從**內網網段**、用 **TLS** 加上 **scram-sha-256 密碼**連線。`10.0.201.0/24` 是團隊伺服器（`10.0.201.134`）所在的網段；用 `ip -4 addr show` 確認斜線後的數字。團隊成員如果還在其他網段（例如透過 VPN），每個網段各加一行 `hostssl`，都要放在 `reject` 之前。見第 11 節。
-- **第 5 行**：給在伺服器本機執行的 loader 使用。只開放 `etl_writer` 一個角色，而且只開放 Docker 網路閘道這一個 IP。原因見第 11 節。
+  - 伺服器本身也在這個網段裡：在伺服器上執行的 loader（`etl_writer`）也是靠這一行連線，見第 11.2 節。
 - **最後兩行**：其他 IPv4 與 IPv6 連線一律拒絕。`host` 同時涵蓋有 TLS 和沒有 TLS 的連線，所以不需要另外寫 `hostnossl`。
 - 規則**由上往下比對**，新增的允許規則一定要放在 `reject` 之前。
 
@@ -199,7 +198,7 @@ cp "$REPO/db/compose.server.yaml" compose.yaml
 - 只有 superuser 的密碼透過 Docker secrets 掛進 container；角色密碼不掛，見第 5 節。
 - 不掛 `/docker-entrypoint-initdb.d`：角色與 schema 一律來自 `db/migrations/`（第 9.1 節）。init script 只在空的 volume 第一次啟動時執行，平常看不出影響，但還原到新的空資料庫或升級 major 版本時，它會搶在 migration 之前執行。
 - TLS、`pg_hba.conf` 的路徑與 `password_encryption` 由 `command` 指定（第 6、7 節）。
-- `networks` 把 Docker 網段固定在 `192.30.0.0/24`，`pg_hba.conf` 的 `etl_writer` 規則依賴它（第 11 節）。
+- `networks` 把 Docker 網段固定在 `192.30.0.0/24`。不固定的話，Docker 會從預設位址池（`172.17`～`172.31`）分配，和公司內網衝突。
 
 > ⚠️ **Docker 會繞過 ufw 防火牆。** `ports: "5432:5432"` 等於把資料庫開放給所有網路介面，即使 ufw 設定了拒絕也一樣。所以一定要在 `ports` 裡寫明內網 IP。
 
@@ -210,7 +209,7 @@ cp "$REPO/db/compose.server.yaml" compose.yaml
 > - 公司內網用了哪些網段：**要問 IT**。透過預設閘道才連得到的網段不會出現在 `ip route` 裡。
 > - Docker 的預設位址池（`/etc/docker/daemon.json` 的 `bip`、`default-address-pools`）。
 >
-> 這台伺服器的三個私有網段都已經有人用了：`172.16.0.0/12` 是公司內網，`192.168.0.0/16` 是 `docker0`，`10.0.0.0/8` 有公司內網。所以選用公網位址 `192.30.0.0/24`。代價是伺服器連不到外部的 `192.30.0.x`，這 256 個位址剛好是伺服器需要連的服務的機率很低。要換回私有網段，得先把 `docker0` 的 `bip` 縮小到 `/24`，並重啟 Docker daemon，伺服器上所有 container 都會跟著重啟。換網段時要同步修改 `pg_hba.conf`，並照第 11.3 節 `down` 再 `up`。
+> 這台伺服器的三個私有網段都已經有人用了：`172.16.0.0/12` 是公司內網，`192.168.0.0/16` 是 `docker0`，`10.0.0.0/8` 有公司內網。所以選用公網位址 `192.30.0.0/24`。代價是伺服器連不到外部的 `192.30.0.x`，這 256 個位址剛好是伺服器需要連的服務的機率很低。要換回私有網段，得先把 `docker0` 的 `bip` 縮小到 `/24`，並重啟 Docker daemon，伺服器上所有 container 都會跟著重啟。換網段之後要 `docker compose down` 再 `up -d` 才會生效（只刪 container 和網路，volume 保留；絕不加 `-v`）。
 
 ---
 
@@ -339,11 +338,11 @@ docker compose exec -u postgres db psql -c \
 # error 欄位有值 → 那一行寫錯了
 ```
 
-### 11.2 陷阱：伺服器自己連自己時，來源 IP 不是 10.0.201.134
+### 11.2 伺服器自己連自己時，來源 IP 是什麼
 
-ETL 在伺服器上執行，所以 loader 會從**伺服器本機**連資料庫。這時 PostgreSQL 看到的來源 IP，**通常是 Docker 網路的閘道**（例如 `192.30.0.1`），而不是伺服器的內網 IP。原因如下：
+ETL 在伺服器上執行，所以 loader 會從**伺服器本機**連到 `10.0.201.134:5432`。在這台伺服器上實測，PostgreSQL 看到的來源是**伺服器自己的 IP `10.0.201.134`**，符合第 7 節的團隊網段規則，所以不需要另外開規則。
 
-PostgreSQL 跑在 container 裡，container 有自己的私有網路：
+PostgreSQL 跑在 container 裡，container 有自己的網路：
 
 ```
 伺服器（host）
@@ -353,47 +352,44 @@ PostgreSQL 跑在 container 裡，container 有自己的私有網路：
      └── db container：192.30.0.2   ← PostgreSQL 實際在這裡監聽
 ```
 
-`ports: "10.0.201.134:5432:5432"` 的作用是「送到 10.0.201.134:5432 的連線，轉送給 192.30.0.2:5432」。但外部連線和本機連線的轉送方式不同：
+`ports: "10.0.201.134:5432:5432"` 的作用是「送到 10.0.201.134:5432 的連線，轉送給 192.30.0.2:5432」。Docker 用 iptables 改寫封包的**目的地**，不論連線來自其他機器還是伺服器本機，**來源都不變**：
 
-| 從哪裡連線 | Docker 怎麼轉送 | PostgreSQL 看到的來源 |
-|---|---|---|
-| 其他機器（例如 10.0.201.129） | iptables 只改封包的**目的地**，來源不變 | `10.0.201.129` ✅ 符合團隊網段規則 |
-| 伺服器本機（loader） | 由 **docker-proxy** 程式接手，再**用它自己的身分**從閘道發起新連線 | `192.30.0.1` ❌ 不在團隊網段內 → 被 `reject` |
+| 從哪裡連線 | PostgreSQL 看到的來源 |
+|---|---|
+| 其他機器（例如 10.0.201.129） | `10.0.201.129` |
+| 伺服器本機（loader） | `10.0.201.134` |
 
-這就是 `pg_hba.conf` 第 5 行存在的原因。另外：
-- 改連 `127.0.0.1` 也沒用，因為 `ports` 只綁了 `10.0.201.134`。
-- `local` 規則也不適用，它只管 container 內部的 Unix socket。
+例外：iptables 處理不到的連線會改由 **docker-proxy** 轉送，docker-proxy 會從閘道發起新的連線，來源就變成 `192.30.0.1`，不在團隊網段內，會被 `reject`。例如 Docker 設定了 `"iptables": false`，或之後的 Docker 版本改變了這個行為。這時 loader 會出現 `pg_hba.conf rejects connection for host "192.30.0.1"`。處理方式是在 `reject` 之前加上一行，只開放 `etl_writer`、只開放這一個 IP：
 
-說「通常」，是因為實際看到的 IP 取決於 Docker 的設定。例如管理者把 `/etc/docker/daemon.json` 設成 `"userland-proxy": false`，就不會經過 docker-proxy，來源可能變成閘道或 host 的 IP。**不要猜，用 11.1 的方法確認。**
+```
+hostssl   openpgx   etl_writer  192.30.0.1/32    scram-sha-256
+```
 
-### 11.3 設定步驟
+另外：
+- 連 `127.0.0.1` 不會成功，因為 `ports` 只綁了 `10.0.201.134`。
+- `local` 規則不適用，它只管 container 內部的 Unix socket。
 
-1. **固定 Docker 網段。** `compose.yaml` 的 `networks` 段落把網段固定在 `192.30.0.0/24`（第 8 節）。如果不固定，Docker 重建網路時可能分配到別的網段，`pg_hba.conf` 寫死的 IP 就會失效。
-   - 修改 `networks` 之後，要重建 container 才會生效：
-     ```bash
-     docker compose down     # 只刪 container 和網路，volume 保留；絕不加 -v
-     docker compose up -d
-     ```
-2. **確認 Docker 認定的閘道：**
-   ```bash
-   docker network ls    # 找到這個專案的網路，名稱通常是 <目錄名>_default，例如 openpgx_default
-   docker network inspect openpgx_default \
-     --format '{{range .IPAM.Config}}subnet={{.Subnet}} gateway={{.Gateway}}{{end}}'
-   # 預期：subnet=192.30.0.0/24 gateway=192.30.0.1
-   ```
-3. **確認 PostgreSQL 實際看到的 IP。** 在伺服器上用 `etl_writer` 連線一次，再照 11.1 查看 log。這個 IP 應該和步驟 2 的閘道一致；**不一致時，以 log 為準**。
-4. **把這個 IP 寫進 `pg_hba.conf` 第 5 行**，用 `/32`，只開放給 `etl_writer`。接著執行 `pg_ctl reload`，並檢查 `pg_hba_file_rules`。
-5. **驗證：**
-   ```bash
-   # etl_writer 從本機連線 → 應該成功；seen_as = 192.30.0.1，ssl = t
-   psql "host=10.0.201.134 dbname=openpgx user=etl_writer sslmode=require" -c \
-     'SELECT inet_client_addr() AS seen_as, ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid();'
+**不要猜，用 11.1 的方法確認。**
 
-   # analyst_ro 從本機連線 → 應該被拒絕（第 5 行只開放 etl_writer）
-   psql "host=10.0.201.134 dbname=openpgx user=analyst_ro sslmode=require" -c 'select 1'
-   ```
+### 11.3 驗證
 
-> 為什麼只開放給 `etl_writer`、而且用 `/32`：閘道 IP 代表「伺服器本機上的任何 process」，範圍不應該開得比需要的更大。
+在伺服器上：
+
+```bash
+# etl_writer 從本機連線 → 應該成功；seen_as = 10.0.201.134，ssl = t
+psql "host=10.0.201.134 dbname=openpgx user=etl_writer sslmode=require" -c \
+  'SELECT inet_client_addr() AS seen_as, ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid();'
+```
+
+在內網的另一台機器上：
+
+```bash
+# 加上 TLS → 成功；seen_as 是這台機器的 IP
+psql "host=10.0.201.134 dbname=openpgx user=analyst_ro sslmode=require" -c \
+  'SELECT inet_client_addr() AS seen_as, ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid();'
+# 沒有 TLS → 被拒絕，訊息包含 no encryption
+psql "host=10.0.201.134 dbname=openpgx user=analyst_ro sslmode=disable" -c 'select 1'
+```
 
 ---
 
@@ -500,7 +496,7 @@ docker compose exec -T -u postgres db pg_restore -d openpgx --clean --if-exists 
 | `docker compose ps` 一直不是 healthy | 看 `docker compose logs db`。最常見的是 TLS 私鑰權限不對（必須是 uid 999、權限 600） |
 | `pg_hba.conf rejects connection for host "x.x.x.x"` | client 的 IP 不在任何 `hostssl` 允許的網段，所以落到最後的 `reject` 規則。把 `host "..."` 裡的 IP 所在網段加進第 7 節的第 4 行（第 11.1 節） |
 | `no pg_hba.conf entry for host` | client 的 IP 不在 `hostssl` 那一行的網段，或者沒有用 `sslmode=require`。log 裡 `host "..."` 就是 PostgreSQL 看到的 IP（第 11.1 節） |
-| loader 在伺服器上連不進去，但其他機器可以 | 伺服器自己連自己時，來源是 Docker 閘道（例如 `192.30.0.1`），不是 `10.0.201.134`（第 11.2 節） |
+| loader 在伺服器上連不進去，訊息是 `rejects connection for host "192.30.0.1"`，但其他機器可以 | 本機連線改由 docker-proxy 從 Docker 閘道轉送，照第 11.2 節加上閘道規則 |
 | `You must install at least one postgresql-client-<version> package` | client 端只裝了 `pg_wrapper`，沒有真正的 `psql`。照第 10.1 節安裝 client |
 | 角色登入時 `password authentication failed`，但密碼確定是密碼檔的內容 | 角色的密碼還沒設定（migration 建立的角色沒有密碼），或密碼檔後來改過。照第 5 節設定 |
 | `the input device is not a TTY` | 用 heredoc 或管線把輸入送給 `docker compose exec` 時，沒有加 `-T` |

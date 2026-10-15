@@ -40,8 +40,9 @@ networks:
   default:
     ipam:
       config:
+        # 固定網段：不固定的話 Docker 會從 172.17～31 分配，和公司內網衝突。
         # 公網位址：172.16/12 與內網衝突，192.168/16 被 docker0 佔用（第 8 節）
-        - subnet: 192.30.0.0/24   # pg_hba.conf 的 etl_writer 規則依賴它（第 11 節）
+        - subnet: 192.30.0.0/24
           gateway: 192.30.0.1
 
 secrets:
