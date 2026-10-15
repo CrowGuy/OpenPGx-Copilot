@@ -1,6 +1,6 @@
 # 本機資料庫（開發與測試）
 
-伺服器的設定見 `docs/postgres-docker-playbook.md`。這個目錄放兩邊共用的東西：`meta` 的編號 migration（`migrations/`）與 Release schema 的 DDL（`release_schema.sql`），以及本機用的 Compose 設定。
+伺服器的設定見 `docs/postgres-docker-playbook.md`。這個目錄放兩邊共用的東西：`meta` 的編號 migration（`migrations/`）與 Release schema 的 DDL（`release_schema.sql`），以及兩份 Compose 設定：本機用的 `compose.yaml` 與伺服器用的 `compose.server.yaml`（部署方式見 playbook 第 8 節）。
 
 ## 啟動
 
