@@ -313,6 +313,7 @@ def load_dataset(
         trait_table = trait_rule["target_table"]
         trait_key_index = curated.index(TRAIT_TABLES[trait_table])
         curated.append("trait_uri_invalid")
+    curated.append("source_line")
     copy_sql = sql.SQL("COPY {} ({}) FROM STDIN").format(
         sql.Identifier(dataset["curated_table"]), sql.SQL(", ").join(map(sql.Identifier, curated))
     )
@@ -384,6 +385,7 @@ def load_dataset(
                     trait_uri_invalid_rows += len(valid) < len(tokens)
                     for uri in dict.fromkeys(valid):
                         trait_copy.write_row((values[trait_key_index], uri))
+                values.append(line_number)
                 copy.write_row(values)
 
         rejected_rows = source_rows - loaded_rows

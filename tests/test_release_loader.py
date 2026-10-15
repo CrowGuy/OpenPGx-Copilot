@@ -631,6 +631,7 @@ class ReleaseLoaderTest(unittest.TestCase):
         studies = next(d for d in contract["datasets"] if d["role"] == "published_studies")
         expected = {c["curated_column"]: PG_TYPES[c["curated_type"]] for c in studies["columns"]}
         expected["trait_uri_invalid"] = "boolean"
+        expected["source_line"] = "integer"
         actual = dict(
             self.query(
                 ETL_DSN,
@@ -813,6 +814,35 @@ class ReleaseLoaderTest(unittest.TestCase):
             ETL_DSN, "SELECT load_report -> 'published_associations' FROM meta.release WHERE release_id = 'r2000-01-02'"
         )[0]
         self.assertEqual(report["rejection_reasons"], {"STUDY ACCESSION: foreign_key": 1})
+
+    def test_curated_rows_trace_back_to_their_source_lines(self) -> None:
+        snapshot = make_snapshot(self.tmp, "r2000-01-02", association_with_unknown_study, ASSOCIATIONS_FILE)
+        self.assertEqual(self.load(snapshot, self.lenient_contract()), 0)
+        for table, filename, key, source_column in (
+            ("study", STUDIES_FILE, "study_accession", "STUDY ACCESSION"),
+            ("association", ASSOCIATIONS_FILE, "snps", "SNPS"),
+            ("ancestry", ANCESTRIES_FILE, "study_accession", "STUDY ACCESSION"),
+            ("trait_mapping", TRAIT_MAPPINGS_FILE, "efo_uri", "EFO URI"),
+        ):
+            with self.subTest(table=table):
+                header, *rows = [
+                    line.split("\t") for line in (snapshot / filename).read_text(encoding="utf-8").splitlines()
+                ]
+                rejected = {
+                    line
+                    for (line,) in self.query(
+                        ETL_DSN, "SELECT source_line FROM gwas_r2000_01_02.rejected_row WHERE source_file = %s", (filename,)
+                    )
+                }
+                # Same numbering as rejected_row: line 1 is the header, and no loaded row reuses a rejected line.
+                expected = {
+                    line: row[header.index(source_column)]
+                    for line, row in enumerate(rows, start=2)
+                    if line not in rejected
+                }
+                actual = dict(self.query(ETL_DSN, f"SELECT source_line, {key} FROM gwas_r2000_01_02.{table}"))
+                self.assertEqual(actual, expected)
+                self.assertEqual(rejected, {3} if table == "association" else set())
 
     def test_full_duplicate_rows_are_kept_with_distinct_ids(self) -> None:
         self.assertEqual(self.load(), 0)

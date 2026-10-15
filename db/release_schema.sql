@@ -1,5 +1,10 @@
 -- Release schema DDL (ADR-0005). The loader runs this with search_path set to a new gwas_r<YYYY_MM_DD> schema.
 -- Column names and types follow raw/gwas_catalog/contracts/gwas_curation_contract.json.
+-- Each curated table comes from one RawSnapshot file, the manifest.json entry with the role below; source_line is
+-- that file's line number (the header is line 1), numbered like rejected_row.source_line. association_id and
+-- ancestry_id only number loaded rows. Child tables trace through their parent.
+--   study <- published_studies, association <- published_associations,
+--   ancestry <- published_ancestries, trait_mapping <- trait_mappings.
 
 CREATE TABLE study (
     date_added_to_catalog date,
@@ -28,7 +33,8 @@ CREATE TABLE study (
     summary_stats_location text,
     gxe boolean,
     -- A MAPPED_TRAIT_URI token failed the CurationContract token_pattern and is missing from study_trait.
-    trait_uri_invalid boolean NOT NULL
+    trait_uri_invalid boolean NOT NULL,
+    source_line integer NOT NULL
 );
 
 -- One row per published_associations source row; full duplicates are kept, each with its own association_id.
@@ -81,7 +87,8 @@ CREATE TABLE association (
     -- Locus Alignment failed: Variant Token and CHR_ID/CHR_POS/risk allele counts differ, so they are not paired.
     misaligned boolean NOT NULL,
     -- A MAPPED_TRAIT_URI token failed the CurationContract token_pattern and is missing from association_trait.
-    trait_uri_invalid boolean NOT NULL
+    trait_uri_invalid boolean NOT NULL,
+    source_line integer NOT NULL
 );
 CREATE INDEX ON association (study_accession);
 
@@ -120,7 +127,8 @@ CREATE TABLE ancestry (
     founder_genetically_isolated_population text,
     number_of_cases integer,
     number_of_controls integer,
-    sample_description text
+    sample_description text,
+    source_line integer NOT NULL
 );
 CREATE INDEX ON ancestry (study_accession);
 
@@ -148,6 +156,7 @@ CREATE TABLE trait_mapping (
     efo_uri text NOT NULL,
     parent_term text,
     parent_uri text,
+    source_line integer NOT NULL,
     PRIMARY KEY (disease_trait, efo_uri)
 );
 CREATE INDEX ON trait_mapping (efo_uri);
