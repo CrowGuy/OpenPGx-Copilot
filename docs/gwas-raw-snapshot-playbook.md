@@ -39,7 +39,7 @@
 
 - Python 3.10 以上。
 - 可連線至 contract 允許的 EBI host。
-- `output_root` 可以是絕對或相對路徑，且執行帳號具有寫入權限。
+- `output_root` 可以是絕對或相對路徑，且執行帳號具有寫入權限。相對路徑以 **contract 檔所在的目錄**為起點，不是目前的工作目錄；正式 contract 用絕對路徑 `/srv/openpgx/raw/gwas_catalog`。
 - 可用空間至少應高於預估下載量的兩倍，以容納 archive、解壓後 TSV 與 staging。
 - 同一個 `snapshot_id` 同時間只能有一個執行程序。
 
