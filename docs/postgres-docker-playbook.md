@@ -70,11 +70,12 @@ sudo usermod -aG docker "$USER"
 │   ├── server.crt
 │   └── server.key
 ├── raw/                  # RawSnapshot 正式存放處（ADR-0008）
+├── operations/           # 每次建立 RawSnapshot 的操作紀錄（docs/gwas-raw-snapshot-playbook.md）
 └── backups/              # pg_dump 備份
 ```
 
 ```bash
-sudo mkdir -p /srv/openpgx/{secrets,conf,tls,raw,backups}
+sudo mkdir -p /srv/openpgx/{secrets,conf,tls,raw,operations,backups}
 sudo chown -R "$USER": /srv/openpgx
 chmod 700 /srv/openpgx/secrets
 ```

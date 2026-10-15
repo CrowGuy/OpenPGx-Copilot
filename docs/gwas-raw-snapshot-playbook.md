@@ -54,13 +54,13 @@ python gwas_raw_snapshot.py --help >/dev/null
 確認 contract 中的 `output_root` 指向正式 raw storage，例如：
 
 ```json
-"output_root": "/data/raw/gwas_catalog"
+"output_root": "/srv/openpgx/raw/gwas_catalog"
 ```
 
 建議每次執行建立獨立的操作紀錄目錄：
 
 ```bash
-export GWAS_RUN_DIR="/data/operations/gwas_catalog/$(date -u +%Y%m%dT%H%M%SZ)"
+export GWAS_RUN_DIR="/srv/openpgx/operations/gwas_catalog/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$GWAS_RUN_DIR"
 ```
 
@@ -149,7 +149,7 @@ python gwas_raw_snapshot.py \
 以下以 `r2026-08-22` 為例；實際值以 candidate 的 `snapshot_id` 為準：
 
 ```bash
-export GWAS_SNAPSHOT_DIR="/data/raw/gwas_catalog/r2026-08-22"
+export GWAS_SNAPSHOT_DIR="/srv/openpgx/raw/gwas_catalog/r2026-08-22"
 
 test -f "$GWAS_SNAPSHOT_DIR/_SUCCESS"
 test -f "$GWAS_SNAPSHOT_DIR/manifest.json"
@@ -165,7 +165,7 @@ jq -e '.status == "passed"' validation-report.json >/dev/null
 只有上述檢查全部成功，才可將此 release 登記為目前 baseline。後續流程應明確保存其 manifest 路徑，例如：
 
 ```text
-/data/raw/gwas_catalog/r2026-08-22/manifest.json
+/srv/openpgx/raw/gwas_catalog/r2026-08-22/manifest.json
 ```
 
 不得修改 baseline 目錄中的 TSV、manifest、checksum、validation report 或 `_SUCCESS`。
@@ -183,7 +183,7 @@ jq -e '.status == "passed"' validation-report.json >/dev/null
 `current-manifest` 必須指向最近一次已核准、已有 `_SUCCESS` 且 checksum 驗證通過的 snapshot。不可指向 staging、失敗執行或尚未核准的資料。
 
 ```bash
-export GWAS_CURRENT_MANIFEST="/data/raw/gwas_catalog/r2026-08-22/manifest.json"
+export GWAS_CURRENT_MANIFEST="/srv/openpgx/raw/gwas_catalog/r2026-08-22/manifest.json"
 
 test -f "$(dirname "$GWAS_CURRENT_MANIFEST")/_SUCCESS"
 cd "$(dirname "$GWAS_CURRENT_MANIFEST")"
@@ -322,9 +322,9 @@ Ensembl 版本變更可能改變 variant-to-gene mapping，不能只修改 `expe
 建議先移至 quarantine，而不是立即刪除：
 
 ```bash
-mkdir -p /data/raw/gwas_catalog/.failed
-mv /data/raw/gwas_catalog/.staging/r2026-08-22-<run-id> \
-  /data/raw/gwas_catalog/.failed/
+mkdir -p /srv/openpgx/raw/gwas_catalog/.failed
+mv /srv/openpgx/raw/gwas_catalog/.staging/r2026-08-22-<run-id> \
+  /srv/openpgx/raw/gwas_catalog/.failed/
 ```
 
 依組織 retention policy 到期後再刪除 quarantine。成功發布時 staging 已被 atomic rename 成正式 snapshot，不需要另外清理。
