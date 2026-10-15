@@ -484,10 +484,12 @@ docker compose exec -T -u postgres db pg_restore -d openpgx --clean --if-exists 
   < backups/meta-YYYYMMDD-HHMMSS.dump
 ```
 
+還原之後一定要照第 9.1 節重新套用 migration。`--clean` 會照備份檔重建 `meta.release`，備份比最新的 migration 舊時，之後新增的欄位會不見，loader 會因 `UndefinedColumn` 失敗。
+
 還原到**全新的空資料庫**（換機器、major 升級、volume 遺失）時，順序是：
 
 1. 先照第 9.1 節套用 migration，再照第 5 節設定密碼。備份檔只有 `meta`，不含角色、預設授權與 `gwas` schema。
-2. 再執行上面的 `pg_restore`。
+2. 再執行上面的 `pg_restore`，然後重新套用一次第 9.1 節的 migration。
 3. 這時 `meta` 的紀錄完整，但 Release schema 不在，`gwas` 也沒有 view，團隊查不到資料。用 `gwas_release_loader.py rebuild` 從 RawSnapshot 重建 Release（`db/README.md` 的「Rebuild」一節），先重建 Active Release，`gwas` 的 view 會一起建回來；其他 Release 需要時再重建。不要刪掉 `meta` 紀錄再重新 load：核准紀錄會因此遺失（ADR-0008）。
 4. 最近 Promote 過的 3 個以外的 `retired` Release，重建後只保留到下一次 Promote。不要拿它當長期依賴（例如 Release Pin），需要時再重建。
 
