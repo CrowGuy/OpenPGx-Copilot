@@ -293,18 +293,19 @@ load 在單一 transaction 內執行，任何錯誤（包括 SSH 斷線、Ctrl-C
 
 同一個 Release 不能再 load 一次。審查不通過、修正之後要重新 load，必須先捨棄這個 Candidate：刪掉它的 `meta` 紀錄與 schema。Candidate 沒有核准紀錄，所以可以刪；**`active` 和 `retired` 的紀錄絕對不能刪**（ADR-0008），下面的指令會檢查狀態，不是 `candidate` 就什麼都不做。
 
-先確認 4.1–4.3 的輸出已經貼在 issue。下面的 Release id 是寫死的，**兩處都換成要捨棄的 Release** 再執行：
+先確認 4.1–4.3 的輸出已經貼在 issue，`echo $REL` 確認是要捨棄的 Release（不是的話先執行第 1 節），再執行：
 
 ```bash
-psql -v ON_ERROR_STOP=1 <<'SQL'
-DO $$
+psql -v ON_ERROR_STOP=1 <<SQL
+DO \$\$
+DECLARE rel text := '$REL';
 BEGIN
-  DELETE FROM meta.release WHERE release_id = 'r2026-08-22' AND status = 'candidate';
+  DELETE FROM meta.release WHERE release_id = rel AND status = 'candidate';
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'r2026-08-22 is not a candidate Release; nothing changed';
+    RAISE EXCEPTION '% is not a candidate Release; nothing changed', rel;
   END IF;
-  DROP SCHEMA gwas_r2026_08_22 CASCADE;
-END $$;
+  EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', 'gwas_' || replace(rel, '-', '_'));
+END \$\$;
 SQL
 ```
 
@@ -312,7 +313,7 @@ SQL
 
 ### 6.3 Promote 失敗
 
-promote 在單一 transaction 內執行，失敗時狀態、view 與 schema 都沒有改變。`is not a candidate Release` 表示 `--release` 打錯，或這個 Release 不是 `candidate`（例如已經 Promote 過）；用第 2 節確認。
+promote 在單一 transaction 內執行，失敗時狀態、view 與 schema 都沒有改變。`is not a candidate Release` 表示 `--release` 打錯，或這個 Release 不是 `candidate`（例如已經 Promote 過）；用第 2 節確認。`gwas_r... does not exist` 表示這個 Candidate 的 schema 已經不在，照第 6.2 節捨棄後重新 load。
 
 ### 6.4 Promote 之後才發現問題
 
@@ -345,7 +346,9 @@ echo "$COMMIT"
 ```bash
 git worktree add "/tmp/openpgx-$REL" "$COMMIT"
 cd "/tmp/openpgx-$REL"
-"$PY" tools/gwas_release_loader.py rebuild --release "$REL" \
+LOADER=tools/gwas_release_loader.py
+git merge-base --is-ancestor 6ea544a "$COMMIT" || LOADER="$REPO/tools/gwas_release_loader.py"
+"$PY" "$LOADER" rebuild --release "$REL" \
   --snapshot-dir "$SNAP" \
   --curation-contract raw/gwas_catalog/contracts/gwas_curation_contract.json
 echo "exit=$?"
@@ -354,6 +357,7 @@ cd "$REPO" && git worktree remove "/tmp/openpgx-$REL"
 
 成功時印出 `Rebuilt r2026-08-22 (active|retired) into gwas_r2026_08_22`，`exit=0`。用第 2 節確認 `schema_exists` 變成 `t`；重建的是 Active Release 時，`gwas_points_to` 也會指回它。
 
+- `COMMIT` 早於 `6ea544a`（#14，rebuild 會比對列數的第一個版本）時，那時的 loader 沒有 `rebuild` 或不會比對列數，所以改用目前 repo 的 loader，CurationContract 仍用 `COMMIT` 的。loader 若在 load 之後改過整理規則，列數會對不上而 rollback（第 6.6 節）。
 - rebuild 在單一 transaction 內執行，`meta` 的狀態與核准紀錄不變；任何檢查失敗都會 rollback。
 - 一次重建一個 Release。從空資料庫還原時先重建 Active Release，團隊才查得到資料；其他 Release 需要時再重建。
 - 最近 Promote 過的 3 個以外的 `retired` Release，重建後只保留到下一次 Promote。不要拿它當長期依賴（例如 Release Pin）。
@@ -362,9 +366,9 @@ cd "$REPO" && git worktree remove "/tmp/openpgx-$REL"
 
 | 錯誤訊息 | 原因與處理 |
 |---|---|
-| `RawSnapshot manifest sha256 ... does not match` | `$SNAP` 不是當初 load 的那份 RawSnapshot。從第二個儲存位置找回原本的 snapshot（第 7.4 節） |
+| `RawSnapshot manifest sha256 ... does not match` | `$SNAP` 不是當初 load 的那份 RawSnapshot。先確認 `$SNAP` 的路徑沒有打錯；路徑正確代表 snapshot 被改過，目前沒有第二份可以找回（第 7.4 節），這個 Release 無法重建。不要修改 snapshot 或 `meta` 來讓檢查通過，在 issue 記錄並通知負責人 |
 | `CurationContract version/sha256 ... does not match` | `COMMIT` 的 CurationContract 不是當初那份。用 `git log --oneline origin/main -- raw/gwas_catalog/contracts/gwas_curation_contract.json` 找出 load 前後的版本，換 `COMMIT` 再試 |
-| `Rebuilt ... does not match its load report in meta.release: ...` | 同樣的輸入整理出不同的列數，代表 loader 在 load 之後改過。已經 rollback；換成更接近 load 時間的 `COMMIT` 再試 |
+| `Rebuilt ... does not match its load report in meta.release: ...` | 同樣的輸入整理出不同的列數，代表 loader 在 load 之後改過。已經 rollback；換成更接近 load 時間的 `COMMIT` 再試。`COMMIT` 早於 `6ea544a`（用的是目前 repo 的 loader）時換 `COMMIT` 沒有用，這個 Release 無法用現有工具重建，在 issue 記錄並通知負責人 |
 | `... already exists; rebuild only restores a dropped Release schema` | schema 還在，不需要重建 |
 | `... is not an active or retired Release in meta.release` | `candidate` 不會失去 schema；load 失敗的 Release 沒有 `meta` 紀錄，照第 3 節重新 load |
 | `... has no recorded RawSnapshot manifest, CurationContract or load report` | 這個 Release 是在 #6 之前載入的，無法驗證輸入，不能重建 |
@@ -399,6 +403,8 @@ sudo docker compose exec -T -u postgres db pg_restore -d openpgx --clean --if-ex
   < backups/meta-YYYYMMDD-HHMMSS.dump
 ```
 
+接著**照 Docker playbook 第 9.1 節重新套用 migration**。`--clean` 會照備份檔重建 `meta.release`，備份比最新的 migration 舊時，之後新增的欄位會不見，load 與 rebuild 都會因 `UndefinedColumn` 失敗。migration 可以重複執行，所以每次還原後都套用一次。
+
 `meta` 會回到備份當時的樣子，Release schema 和 `gwas` 的 view 不受影響。還原之後執行第 2 節（要先執行第 1 節設定連線）檢查兩者是否一致：
 
 - 備份之後才 load 的 Release，會出現在 `schema_without_meta`。
@@ -411,7 +417,7 @@ sudo docker compose exec -T -u postgres db pg_restore -d openpgx --clean --if-ex
 換機器、major 版本升級、volume 遺失時，依序：
 
 1. 照 Docker playbook 第 9.1 節套用 migration，再照第 5 節設定角色密碼。備份檔只有 `meta`，不含角色、授權與 `gwas` schema。
-2. 照 7.2 執行 `pg_restore`。
+2. 照 7.2 執行 `pg_restore`，再重新套用一次 migration。
 3. 執行第 2 節：`meta` 的紀錄都在，但所有 `schema_exists` 都是 `f`，`gwas` 也沒有 view，團隊查不到資料。
 4. 照第 6.5 節先 rebuild Active Release，`gwas` 的 view 會一起建回來；其他 Release 需要時再重建。
 

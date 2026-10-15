@@ -557,6 +557,9 @@ def promote(args: argparse.Namespace) -> str:
         ).rowcount
         if updated != 1:
             raise LoaderError(f"{args.release} is not a candidate Release")
+        # Without its schema, point_gwas_views would drop every gwas view and create none.
+        if conn.execute("SELECT to_regnamespace(%s)", (schema,)).fetchone() == (None,):
+            raise LoaderError(f"{schema} does not exist; discard {args.release} and load it again")
         point_gwas_views(conn, schema)
         # Only Releases that were ever promoted take one of the KEPT_RELEASES places, ranked by promote time, so the
         # previous Active Release always stays; already dropped ones still count. Candidates are never dropped.

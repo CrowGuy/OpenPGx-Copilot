@@ -447,6 +447,20 @@ class ReleaseLoaderTest(unittest.TestCase):
         )
         self.assertEqual(rows, [(True,)])
 
+    def test_promote_of_a_candidate_without_its_schema_changes_nothing(self) -> None:
+        self.assertEqual(self.load(), 0)
+        self.assertEqual(self.promote(), 0)
+        self.assertEqual(self.load(make_snapshot(self.tmp, "r2000-01-02", unchanged)), 0)
+        with psycopg.connect(ETL_DSN) as conn:
+            conn.execute("DROP SCHEMA gwas_r2000_01_02 CASCADE")
+        before = self.query(ETL_DSN, "SELECT * FROM meta.release ORDER BY release_id")
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            self.assertNotEqual(self.promote("r2000-01-02"), 0)
+        self.assertIn("gwas_r2000_01_02 does not exist", stderr.getvalue())
+        self.assertEqual(self.query(ETL_DSN, "SELECT * FROM meta.release ORDER BY release_id"), before)
+        self.assertEqual(self.query(ANALYST_DSN, "SELECT count(*) FROM gwas.study"), [(27,)])
+
     def rebuild(self, release: str = RELEASE, snapshot: Path = SNAPSHOT, contract: Path = CONTRACT) -> int:
         return self.loader.main(
             [
