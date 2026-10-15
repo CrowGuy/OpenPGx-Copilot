@@ -1,5 +1,11 @@
-# Local development and test PostgreSQL. Not for the server: see docs/postgres-docker-playbook.md.
+# Local development and test PostgreSQL. Not for the server: that is db/compose.server.yaml.
 # Start (and re-apply migrations): docker compose -f db/compose.yaml up -d
+# Same as the server: image, database name, pgdata path, roles and schemas (db/migrations/).
+# Deliberately different from the server (only 127.0.0.1 can reach this, and it holds no real data):
+#   - passwords: fixed dev values here and in dev-setup.sh, not Docker secrets
+#   - no TLS and no pg_hba.conf: the image defaults accept local scram connections
+#   - port bound to 127.0.0.1, not the intranet IP; no pinned subnet (no Docker gateway rule to match)
+#   - migrations and dev passwords are applied by the migrate service, not by hand
 services:
   db:
     image: postgres:18

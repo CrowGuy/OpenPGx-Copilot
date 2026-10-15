@@ -1,0 +1,48 @@
+# Server PostgreSQL (docs/postgres-docker-playbook.md). Local development uses db/compose.yaml.
+# Deploy: cp db/compose.server.yaml /srv/openpgx/compose.yaml, then run docker compose in /srv/openpgx.
+# Do not run this file from the repo: ./conf, ./tls and ./secrets resolve next to the compose file.
+services:
+  db:
+    image: postgres:18            # 固定 major 版本；不要用 latest
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: openpgx
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_superuser
+    secrets: [postgres_superuser]   # 角色密碼不掛進 container，見第 5 節
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/etc/postgresql/tls/server.crt
+      - -c
+      - ssl_key_file=/etc/postgresql/tls/server.key
+      - -c
+      - hba_file=/etc/postgresql/conf/pg_hba.conf
+      - -c
+      - password_encryption=scram-sha-256
+    volumes:
+      - pgdata:/var/lib/postgresql   # PostgreSQL 18 起的官方 image 掛在這一層
+      - ./conf:/etc/postgresql/conf:ro   # 掛整個目錄，不要只掛單一檔案（第 8 節）
+      - ./tls:/etc/postgresql/tls:ro
+    ports:
+      - "10.0.201.134:5432:5432"   # 只綁內網 IP，絕不寫成 "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d openpgx"]
+      interval: 10s
+      retries: 5
+
+volumes:
+  pgdata:
+
+networks:
+  default:
+    ipam:
+      config:
+        # 公網位址：172.16/12 與內網衝突，192.168/16 被 docker0 佔用（第 8 節）
+        - subnet: 192.30.0.0/24   # pg_hba.conf 的 etl_writer 規則依賴它（第 11 節）
+          gateway: 192.30.0.1
+
+secrets:
+  postgres_superuser: { file: ./secrets/postgres_superuser }
