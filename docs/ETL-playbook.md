@@ -293,18 +293,19 @@ load 在單一 transaction 內執行，任何錯誤（包括 SSH 斷線、Ctrl-C
 
 同一個 Release 不能再 load 一次。審查不通過、修正之後要重新 load，必須先捨棄這個 Candidate：刪掉它的 `meta` 紀錄與 schema。Candidate 沒有核准紀錄，所以可以刪；**`active` 和 `retired` 的紀錄絕對不能刪**（ADR-0008），下面的指令會檢查狀態，不是 `candidate` 就什麼都不做。
 
-先確認 4.1–4.3 的輸出已經貼在 issue。下面的 Release id 是寫死的，**兩處都換成要捨棄的 Release** 再執行：
+先確認 4.1–4.3 的輸出已經貼在 issue，`echo $REL` 確認是要捨棄的 Release（不是的話先執行第 1 節），再執行：
 
 ```bash
-psql -v ON_ERROR_STOP=1 <<'SQL'
-DO $$
+psql -v ON_ERROR_STOP=1 <<SQL
+DO \$\$
+DECLARE rel text := '$REL';
 BEGIN
-  DELETE FROM meta.release WHERE release_id = 'r2026-08-22' AND status = 'candidate';
+  DELETE FROM meta.release WHERE release_id = rel AND status = 'candidate';
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'r2026-08-22 is not a candidate Release; nothing changed';
+    RAISE EXCEPTION '% is not a candidate Release; nothing changed', rel;
   END IF;
-  DROP SCHEMA gwas_r2026_08_22 CASCADE;
-END $$;
+  EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', 'gwas_' || replace(rel, '-', '_'));
+END \$\$;
 SQL
 ```
 
@@ -312,7 +313,7 @@ SQL
 
 ### 6.3 Promote 失敗
 
-promote 在單一 transaction 內執行，失敗時狀態、view 與 schema 都沒有改變。`is not a candidate Release` 表示 `--release` 打錯，或這個 Release 不是 `candidate`（例如已經 Promote 過）；用第 2 節確認。
+promote 在單一 transaction 內執行，失敗時狀態、view 與 schema 都沒有改變。`is not a candidate Release` 表示 `--release` 打錯，或這個 Release 不是 `candidate`（例如已經 Promote 過）；用第 2 節確認。`gwas_r... does not exist` 表示這個 Candidate 的 schema 已經不在，照第 6.2 節捨棄後重新 load。
 
 ### 6.4 Promote 之後才發現問題
 
