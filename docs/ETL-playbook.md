@@ -23,7 +23,7 @@ load ──► 審查 Candidate ──► promote ──► 備份 meta
 
 ```bash
 # repo 放在 /srv/openpgx 底下
-git clone https://github.com/CrowGuy/OpenPGx-Copilot.git /srv/openpgx/OpenPGx-Copilot
+git clone https://github.com/CrowGuy/OpenPGx-Copilot.git /srv/openpgx/repo
 
 # loader 只需要 psycopg；Ubuntu 的系統 Python 不能直接 pip install，所以用 venv
 sudo apt-get install -y python3-venv
@@ -35,10 +35,19 @@ python3 -m venv /srv/openpgx/venv
 
 `etl_writer` 的密碼放進 `~/.pgpass`，之後的指令都不用輸入密碼，密碼也不會出現在指令或環境變數裡：
 
+以**執行 loader 的那個帳號**執行，不要加 `sudo`：
+
 ```bash
-touch ~/.pgpass && chmod 600 ~/.pgpass
-printf '10.0.201.134:5432:openpgx:etl_writer:%s\n' "$(sudo cat /srv/openpgx/secrets/etl_writer)" >> ~/.pgpass
+sudo -v                                           # 先完成 sudo 驗證，否則下一行可能讀到空密碼
+pw=$(sudo cat /srv/openpgx/secrets/etl_writer)
+test -n "$pw" && printf '10.0.201.134:5432:openpgx:etl_writer:%s\n' "$pw" > ~/.pgpass
+unset pw
+chmod 600 ~/.pgpass                               # 權限比 600 寬時，libpq 會忽略整個檔案
+psql -w -d openpgx -U etl_writer -h 10.0.201.134 -c 'SELECT current_user, inet_client_addr() AS seen_as;'
 ```
+
+- 驗證用 `-w`（不詢問密碼），行為和 loader 一樣：應該看到 `etl_writer` 與 `172.30.0.1`。出現 `fe_sendauth: no password supplied` 代表 loader 讀不到 `~/.pgpass`：檔案不在這個帳號的家目錄、權限太寬，或密碼欄位是空的（`awk -F: '{print NR": user="$4" 密碼長度="length($5)}' ~/.pgpass` 檢查）。
+- 這裡用 `>` 覆寫。`~/.pgpass` 裡如果還有其他服務的密碼，改用編輯器只換掉 `etl_writer` 那一行；重複用 `>>` 附加會留下舊的錯誤行，而 libpq 用的是第一個符合的那一行。
 
 - `10.0.201.134` 換成伺服器實際的內網 IP（Docker playbook 第 6 節）。
 - loader 從伺服器本機連線，走 `pg_hba.conf` 的 Docker 閘道規則，只有 `etl_writer` 能這樣連（Docker playbook 第 11.2 節）。
@@ -52,7 +61,7 @@ printf '10.0.201.134:5432:openpgx:etl_writer:%s\n' "$(sudo cat /srv/openpgx/secr
 
 ```bash
 export REL=r2026-08-22
-export REPO=/srv/openpgx/OpenPGx-Copilot
+export REPO=/srv/openpgx/repo
 export SNAP=/srv/openpgx/raw/gwas_catalog/$REL
 export SCHEMA=gwas_${REL//-/_}            # gwas_r2026_08_22
 export PY=/srv/openpgx/venv/bin/python
@@ -110,10 +119,13 @@ git rev-parse --short HEAD                                   # 記下來，寫�
 associations 全量資料要跑很久。SSH 斷線會中斷 load（會自動 rollback，不會留下半套資料，但要重跑），所以在 `tmux` 裡執行：
 
 ```bash
-tmux new -s etl            # 斷線後用 tmux attach -t etl 接回；進去後重新執行第 1 節
+tmux new -s etl            # 斷線後用 tmux attach -t etl 接回
 ```
 
+**進入 tmux 之後，先重新執行第 1 節。** tmux 是一個新的 shell，tmux 外面 `export` 的變數不一定會帶進來。下面第一行會在變數沒設定時直接停下來：
+
 ```bash
+: "${PY:?PY 沒有設定：先在這個 shell（包括 tmux 裡）執行第 1 節}" "${SNAP:?SNAP 沒有設定：先執行第 1 節}"
 time "$PY" tools/gwas_release_loader.py load \
   --snapshot-dir "$SNAP" \
   --curation-contract raw/gwas_catalog/contracts/gwas_curation_contract.json \
@@ -242,11 +254,13 @@ psql "host=10.0.201.134 port=5432 dbname=openpgx user=analyst_ro sslmode=require
 
 ### 5.2 立刻備份 `meta`
 
-核准紀錄重建不回來（ADR-0008）。不要等每天 03:15 的排程，Promote 後馬上備份一次：
+核准紀錄重建不回來（ADR-0008）。排程每個月才備份一次，**Promote 後一定要馬上備份**，這一步不能跳過：
 
 ```bash
 sudo /srv/openpgx/backup-meta.sh            # 最後一行是 ... OK backups/meta-....dump ... bytes
 ```
+
+`backup-meta.sh` 不在 repo 裡，是照 Docker playbook 第 12 節在伺服器上建立的。出現 `command not found` 代表還沒建立（或沒有執行權限），先照第 12 節建立。
 
 ---
 
@@ -363,15 +377,15 @@ cd "$REPO" && git worktree remove "/tmp/openpgx-$REL"
 
 依 ADR-0008：只備份 `meta`（核准紀錄重建不回來）；Release schema 不備份，用 rebuild 重建；RawSnapshot 要另外保存。
 
-### 7.1 每天備份 `meta`
+### 7.1 備份 `meta`
 
-腳本與 cron 的設定見 Docker playbook 第 12 節。除了排程之外，每次 Promote 後立刻手動備份一次（第 5.2 節）。
+腳本與 cron 的設定見 Docker playbook 第 12 節：每個月 1 號自動備份一次，保留約一年。`meta` 只在 load 與 Promote 時改變，所以排程只是保險，**每次 Promote 後立刻手動備份一次**（第 5.2 節）才是主要的備份。
 
 腳本失敗時不會通知任何人，每次換版前都確認一次：
 
 ```bash
 tail -5 /srv/openpgx/backups/backup.log          # 最後一行應該是近期的 OK
-ls -lt /srv/openpgx/backups/ | head -3           # 最新的備份應該是今天或昨天
+ls -lt /srv/openpgx/backups/ | head -3           # 最新的備份應該是上次 Promote 或本月 1 號
 ```
 
 ### 7.2 還原到原本的資料庫

@@ -254,7 +254,7 @@ docker compose logs -f db     # 看啟動訊息，Ctrl-C 離開
 第一次啟動之後，以及每次 `git pull` 帶進新的 migration 檔之後，在 `/srv/openpgx` 目錄下依編號順序全部套用一次。每個 migration 都可以重複執行，已經套用過的不會出錯：
 
 ```bash
-REPO=/path/to/OpenPGx-Copilot          # 換成伺服器上 repo 的路徑
+REPO=/srv/openpgx/repo                 # 伺服器上 repo 的路徑（ETL playbook 第 0 節）
 for f in "$REPO"/db/migrations/*.sql; do
   echo "== $f"
   sudo docker compose exec -T -u postgres db psql -d openpgx -v ON_ERROR_STOP=1 -q < "$f" || break
@@ -430,7 +430,7 @@ PostgreSQL 跑在 container 裡，container 有自己的私有網路：
 - **只備份 `meta` schema**（未來加上 Copilot 的 Rule Evidence schema）。
 - Release schema 不備份，可以從 RawSnapshot 加上 CurationContract 重建。
 
-### 每天備份
+### 定期備份
 
 `/srv/openpgx/backup-meta.sh`：
 
@@ -447,7 +447,7 @@ docker compose exec -T -u postgres db pg_dump -d openpgx -n meta -Fc > "$tmp"
 test -s "$tmp"                     # 檔案是空的 → 視為失敗
 mv "$tmp" "$out"
 echo "$(date -Is) OK $out $(stat -c %s "$out") bytes"
-find backups -name 'meta-*.dump' -mtime +30 -delete   # 保留 30 天
+find backups -name 'meta-*.dump' -mtime +400 -delete  # 保留約一年（每月一份，約 12 份）
 ```
 
 **設定完成後，先手動執行一次，確認真的有產生備份檔：**
@@ -462,15 +462,17 @@ ls -lh /srv/openpgx/backups/       # 應該有一個大小不是 0 的 meta-*.du
 
 ```bash
 sudo crontab -e
-# 加入這一行：每天 03:15 執行
-15 3 * * * /srv/openpgx/backup-meta.sh >> /srv/openpgx/backups/backup.log 2>&1
+# 加入這一行：每個月 1 號 03:15 執行
+15 3 1 * * /srv/openpgx/backup-meta.sh >> /srv/openpgx/backups/backup.log 2>&1
 ```
+
+`meta` 只在 load 與 Promote 時改變，所以每月排程只是保險；**每次 Promote 後一定要立刻手動備份**（ETL playbook 第 5.2 節）。改排程時要一起檢查上面腳本的保留天數：保留天數小於排程間隔，舊備份會在下一次執行時被刪光，`backups/` 永遠只剩一份。
 
 腳本失敗時只會寫進 `backup.log`，**不會主動通知任何人**。最少要定期確認一次：
 
 ```bash
 tail -5 /srv/openpgx/backups/backup.log     # 最後一行應該是近期的 OK
-ls -lt /srv/openpgx/backups/ | head -3      # 最新的備份應該是今天或昨天
+ls -lt /srv/openpgx/backups/ | head -3      # 最新的備份應該是上次 Promote 或本月 1 號
 ```
 
 > 備份檔放在同一台伺服器上，只能防止誤刪資料，不能防止硬碟損壞。要把 `backups/` 和 `raw/` 同步到第二個儲存位置，這件事在 ADR-0008 還沒決定。
