@@ -1,7 +1,7 @@
 {
   "dataset": "nhgri-ebi-gwas-catalog",
   "provider": "NHGRI-EBI GWAS Catalog",
-  "output_root": "raw/gwas_catalog",
+  "output_root": "/srv/openpgx/raw/gwas_catalog",
   "pipeline_version": "1.0.0",
   "snapshot_id_template": "r{release_date}",
   "allowed_hosts": [
@@ -66,7 +66,7 @@
         "STUDY ACCESSION",
         "GENOTYPING TECHNOLOGY"
       ],
-      "minimum_data_rows": 1,
+      "minimum_data_rows": 950000,
       "required": true,
       "archive": {
         "type": "zip",
@@ -107,7 +107,7 @@
         "SUMMARY STATS LOCATION",
         "GXE"
       ],
-      "minimum_data_rows": 1,
+      "minimum_data_rows": 180000,
       "required": true
     },
     {
@@ -136,7 +136,7 @@
         "NUMBER OF CONTROLS",
         "SAMPLE DESCRIPTION"
       ],
-      "minimum_data_rows": 1,
+      "minimum_data_rows": 235000,
       "required": true
     },
     {
@@ -152,7 +152,7 @@
         "Parent term",
         "Parent URI"
       ],
-      "minimum_data_rows": 1,
+      "minimum_data_rows": 88000,
       "required": true
     },
     {
@@ -188,7 +188,7 @@
         "FULL SUMMARY STATISTICS",
         "SUMMARY STATS LOCATION"
       ],
-      "minimum_data_rows": 1,
+      "minimum_data_rows": 11000,
       "required": true
     },
     {
@@ -217,7 +217,7 @@
         "NUMBER OF CONTROLS",
         "SAMPLE DESCRIPTION"
       ],
-      "minimum_data_rows": 1,
+      "minimum_data_rows": 24000,
       "required": true
     }
   ]
