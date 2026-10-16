@@ -228,6 +228,48 @@ zip(mapped_trait.split(","), mapped_trait_uri.split(","))
 * `Reviewer`：負責人。
 * `Notes`：判斷依據、官方文件或抽樣結果。
 
+## 八、換版時：產生報表並和上一版比對
+
+第一份報表（r2026-08-22）是逐項審查後轉成 CurationContract v1。之後每次換版不需要重新審查全部項目，只要找出**新版出現、而 CurationContract 沒處理過的問題**。
+
+在伺服器上產生報表（照 `docs/release-runbook.md` 操作時 `REL`、`SNAP`、`PY` 已經設定，並在 `$REPO` 執行）：
+
+```bash
+"$PY" tools/gwas_first_pass_profiler.py --snapshot-dir "$SNAP" \
+  --output-dir /srv/openpgx/profiles/$REL-exact --unique-mode exact      # 約 15–20 分鐘
+"$PY" tools/gwas_profile_report.py --profile-dir /srv/openpgx/profiles/$REL-exact \
+  --output /srv/openpgx/reports/gwas-profile-report-$REL.xlsx
+```
+
+用 Review Queue 比對上一版的報表（只看 `load_to_curated` 的檔案；`PREV` 是上一份報表的 Release）：
+
+```bash
+PREV=r2026-08-22
+"$PY" - /srv/openpgx/reports/gwas-profile-report-$PREV.xlsx /srv/openpgx/reports/gwas-profile-report-$REL.xlsx <<'EOF'
+import sys
+from openpyxl import load_workbook
+def items(path):
+    rows = load_workbook(path, read_only=True)["Review Queue"].iter_rows(min_row=5, values_only=True)
+    return {r[:4] for r in rows if r[0] and "unpublished" not in (r[1] or "")}
+old, new = items(sys.argv[1]), items(sys.argv[2])
+for r in sorted(new - old): print("NEW ", *r, sep=" | ")
+for r in sorted(old - new): print("GONE", *r, sep=" | ")
+print(f"load_to_curated items: {len(old)} -> {len(new)}; High: {sum(r[0] == 'High' for r in old)} -> {sum(r[0] == 'High' for r in new)}")
+EOF
+```
+
+每一列是 `Priority | Role | Column(s) | Issue`。`NEW` 是新版才出現的項目，`GONE` 是新版不再出現的項目。
+
+判斷：
+
+- **沒有 `NEW`**：直接載入。最終的把關是 ETL playbook 第 4 節的拒絕率比對。
+- **有 `NEW`**：打開新版報表，看該欄位在 Column Summary 與對應的 Review 分頁的數字，判斷 CurationContract v1 的規則是否已經涵蓋（例如新的 Candidate NULL token 落在原本就允許空值的欄位）。
+  - 已涵蓋：在換版 issue 寫下判斷，繼續。
+  - 未涵蓋，而且是 Required Field 或 High：**先不要載入**，討論是否要出新版 CurationContract。用舊版規則載入，問題會變成 Rejected Row 或被設成空值的欄位。
+- `GONE` 通常不需要處理，記在 issue 即可。
+
+報表是 xlsx，要在自己的電腦上用 Excel 或 LibreOffice 開啟時，用 `scp` 複製下來。上一版的報表要留在 `/srv/openpgx/reports/`，下次換版才能比對；伺服器上第一次比對時，先把 repo 外本機的 `reports/gwas-profile-report-r2026-08-22.xlsx` 複製上去。
+
 ## 最終要從報告產出什麼
 
 完成審查後，應把人工決策轉成版本化的 CurationContract（`raw/gwas_catalog/contracts/gwas_curation_contract.json`）。**審查決策以 CurationContract 為準**：每條欄位規則的 `addresses` 註明它處理了哪些 Review Queue 問題類型，不回填 xlsx（xlsx 每次重新產生）。下面是早期草擬的欄位格式示意，實際格式以 contract 檔為準：

@@ -4,6 +4,8 @@
 適用程式：`discover_gwas_release.py`、`gwas_raw_snapshot.py`  
 資料契約：`gwas_dataset_contract.json`
 
+> 整個換版流程（Discovery 到 Promote）的順序與判斷見 `docs/release-runbook.md`。本文的指令假設已設定 `REPO=/srv/openpgx/repo`、`PY=/srv/openpgx/venv/bin/python`，並在 `$REPO` 執行。
+
 ## 1. 目的與適用範圍
 
 本文件說明如何：
@@ -46,9 +48,9 @@
 ### 3.2 執行前檢查
 
 ```bash
-python -m json.tool gwas_dataset_contract.json >/dev/null
-python discover_gwas_release.py --help >/dev/null
-python gwas_raw_snapshot.py --help >/dev/null
+"$PY" -m json.tool raw/gwas_catalog/contracts/gwas_dataset_contract.json >/dev/null
+"$PY" tools/discover_gwas_release.py --help >/dev/null
+"$PY" tools/gwas_raw_snapshot.py --help >/dev/null
 ```
 
 確認 contract 中的 `output_root` 指向正式 raw storage，例如：
@@ -127,7 +129,7 @@ jq '{
 ### 4.3 建立 raw snapshot
 
 ```bash
-python gwas_raw_snapshot.py \
+"$PY" tools/gwas_raw_snapshot.py \
   --config "$GWAS_RUN_DIR/release-config.json" \
   2>&1 | tee "$GWAS_RUN_DIR/raw-snapshot.log"
 ```
@@ -162,11 +164,7 @@ jq -e '.validation.status == "passed"' manifest.json >/dev/null
 jq -e '.status == "passed"' validation-report.json >/dev/null
 ```
 
-只有上述檢查全部成功，才可將此 release 登記為目前 baseline。後續流程應明確保存其 manifest 路徑，例如：
-
-```text
-/srv/openpgx/raw/gwas_catalog/r2026-08-22/manifest.json
-```
+只有上述檢查全部成功，這份 snapshot 才算發布完成；之後的 Discovery 會自動以它為 current manifest（第 5.1 節）。
 
 不得修改 baseline 目錄中的 TSV、manifest、checksum、validation report 或 `_SUCCESS`。
 
@@ -180,25 +178,30 @@ jq -e '.status == "passed"' validation-report.json >/dev/null
 
 ### 5.1 選定 current manifest
 
-`current-manifest` 必須指向最近一次已核准、已有 `_SUCCESS` 且 checksum 驗證通過的 snapshot。不可指向 staging、失敗執行或尚未核准的資料。
+`current-manifest` 是**最新一份已發布的 snapshot**：`/srv/openpgx/raw/gwas_catalog/` 底下日期最新的 `r*` 目錄。只有通過驗證、建立 `_SUCCESS` 的 snapshot 才會被 rename 成這個名稱；staging（`.staging`）與失敗的執行（`.failed`）不會被選到。不需要另外登記。
+
+它不一定是 Active Release：snapshot 建好但 Candidate 審查不通過時，下一次 Discovery 仍然從這份比較，不會再下載同一版。
 
 ```bash
-export GWAS_CURRENT_MANIFEST="/srv/openpgx/raw/gwas_catalog/r2026-08-22/manifest.json"
+export GWAS_CURRENT_MANIFEST="$(ls -d /srv/openpgx/raw/gwas_catalog/r*/ | sort | tail -1)manifest.json"
+echo "$GWAS_CURRENT_MANIFEST"
 
 test -f "$(dirname "$GWAS_CURRENT_MANIFEST")/_SUCCESS"
 cd "$(dirname "$GWAS_CURRENT_MANIFEST")"
 sha256sum --check manifest.sha256
+cd "$REPO"
 ```
 
 ### 5.2 執行 discovery
 
 ```bash
-python discover_gwas_release.py \
-  --contract /path/to/gwas_dataset_contract.json \
+"$PY" tools/discover_gwas_release.py \
+  --contract raw/gwas_catalog/contracts/gwas_dataset_contract.json \
   --current-manifest "$GWAS_CURRENT_MANIFEST" \
   --candidate-out "$GWAS_RUN_DIR/release-config.json" \
   --report-out "$GWAS_RUN_DIR/discovery-report.json" \
-  > "$GWAS_RUN_DIR/discovery-stdout.json"
+  > "$GWAS_RUN_DIR/discovery-stdout.json"; echo "exit=$?"
+jq -r .status "$GWAS_RUN_DIR/discovery-report.json"
 ```
 
 ### 5.3 依 discovery 狀態處理
@@ -222,7 +225,7 @@ python discover_gwas_release.py \
 3. 確認正式 snapshot directory 尚不存在。
 4. 執行 `gwas_raw_snapshot.py`。
 5. 執行發布後 checksum、validation 與 `_SUCCESS` 驗證。
-6. 將新的 manifest 路徑登記為 current manifest。
+6. 不需要登記 current manifest：新的 snapshot 是日期最新的 `r*` 目錄，下一次第 5.1 節會自動選到它。
 7. 保留舊 snapshot；不得刪除或覆寫。
 
 ## 6. Snapshot 驗證範圍
@@ -374,7 +377,6 @@ mv /srv/openpgx/raw/gwas_catalog/.staging/r2026-08-22-<run-id> \
 - snapshot log 路徑。
 - manifest 路徑與 manifest SHA-256。
 - validation 結果與 warnings。
-- current manifest 更新位置。
 - contract、schema 或 pipeline 是否有變更及其 review reference。
 
 操作完成的最低標準：
@@ -383,7 +385,6 @@ mv /srv/openpgx/raw/gwas_catalog/.staging/r2026-08-22-<run-id> \
 - `_SUCCESS` 存在。
 - `manifest.sha256` 驗證成功。
 - manifest 與 validation report 的狀態均為 `passed`。
-- 新 snapshot 被登記為 current manifest。
 - 舊 snapshot 保持不變且仍可讀取。
 
 ## 11. 快速操作清單
@@ -395,7 +396,6 @@ mv /srv/openpgx/raw/gwas_catalog/.staging/r2026-08-22-<run-id> \
 - [ ] 確認 `candidate_ready` 並人工審查 candidate。
 - [ ] 執行 raw snapshot。
 - [ ] 驗證 `_SUCCESS`、manifest checksum 與 validation。
-- [ ] 登記第一份 current manifest。
 - [ ] 依 baseline 筆數 review `minimum_data_rows`。
 
 ### 後續更新
@@ -405,5 +405,5 @@ mv /srv/openpgx/raw/gwas_catalog/.staging/r2026-08-22-<run-id> \
 - [ ] `no_new_release`：結束。
 - [ ] `review_required`：停止並依第 7 節調查。
 - [ ] `candidate_ready`：審查 candidate 後執行 raw snapshot。
-- [ ] 驗證新 snapshot 並更新 current manifest 指向。
+- [ ] 驗證新 snapshot（它會自動成為下一次的 current manifest）。
 - [ ] 保留所有舊 snapshot 與操作紀錄。
