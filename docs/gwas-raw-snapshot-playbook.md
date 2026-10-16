@@ -308,6 +308,35 @@ Ensembl 版本變更可能改變 variant-to-gene mapping，不能只修改 `expe
 
 若正式 snapshot directory 已存在，程式會拒絕覆寫。不要刪除正式 snapshot 來讓重跑成功；應先確認是否已完成發布，或改用經核准的新 snapshot revision。
 
+### 8.1 Cross-file validation 失敗：來源資料不一致
+
+例如 `published_associations contains study accessions absent from published_studies`。這是官方發布的檔案彼此對不上，不是下載或程式錯誤；重跑不會改善。下載的檔案留在 staging，直接用來量化影響，不需要重新下載：
+
+```bash
+ST=/srv/openpgx/raw/gwas_catalog/.staging/<log 裡的 staging 目錄>
+cd "$ST"
+A=$(find . -name 'gwas-catalog-download-associations-alt-full.tsv')
+S=$(find . -name 'gwas-catalog-v1.0.3.1-studies-r*.tsv')
+col(){ head -1 "$1" | tr '\t' '\n' | grep -nx "$2" | cut -d: -f1; }
+sa=$(col "$S" 'STUDY ACCESSION'); aa=$(col "$A" 'STUDY ACCESSION')
+awk -F'\t' -v s="$sa" -v a="$aa" 'FNR==1{next} NR==FNR{ok[$s]=1;next} !($a in ok){print $a}' "$S" "$A" \
+  | sort | uniq -c | sort -rn > "$GWAS_RUN_DIR/missing-studies.txt"
+awk '{r+=$1} END{print "rows="r, "studies="NR}' "$GWAS_RUN_DIR/missing-studies.txt"
+```
+
+判斷：
+
+- 受影響的列數超過 CurationContract 的 Rejection Threshold（associations 資料列的 0.1%）：**跳過這一版**，等下一個 Source Release。放寬 RawSnapshot 的檢查也沒用，load 時一樣會超過門檻。
+- 不要為了單一版本調高 Rejection Threshold 或修改驗證規則。
+- **連續兩版同樣原因失敗**：代表這是來源的常態而不是偶發，開 issue 討論調整做法（會修改 ADR-0007 與 CurationContract），不要在操作當下自行放寬。
+
+跳過時：
+
+1. 把 `validation-report.json` 複製到 `$GWAS_RUN_DIR`，連同 `missing-studies.txt` 一起保留。
+2. 照第 9.1 節把 staging 移到 `.failed`；下一版成功換版後可刪除。
+3. 開 issue 記錄跳過的 release、受影響列數與判斷（例如 #31）。
+4. `GWAS_CURRENT_MANIFEST` 不變。下一次 Discovery 會直接找到最新的 release，被跳過的版本不需要處理。
+
 ## 9. Staging 與 lock 清理
 
 ### 9.1 何時可處理 staging
