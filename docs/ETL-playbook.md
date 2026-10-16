@@ -3,6 +3,8 @@
 適用對象：在團隊伺服器上執行換版的團隊成員。
 適用範圍：把一個 RawSnapshot 載入成 Candidate、審查、Promote 成 Active Release，以及失敗時的復原、`meta` 的備份與還原（ADR-0005、ADR-0007、ADR-0008）。
 
+> 整個換版流程（Discovery、RawSnapshot、Profile 到本文）的順序與判斷見 `docs/release-runbook.md`；本文是其中的 Load、審查與 Promote。
+>
 > 指令行為以 `db/README.md` 為準，伺服器設定以 `docs/postgres-docker-playbook.md`（下文簡稱「Docker playbook」）為準。三者有差異時以那兩份為準，並回頭更新本文。
 
 流程：
@@ -57,10 +59,10 @@ psql -w -d openpgx -U etl_writer -h 10.0.201.134 -c 'SELECT current_user, inet_c
 
 ## 1. 每次換版先設定 shell
 
-每開一個新的 shell 都要重新執行一次。`REL` 換成這次要載入的 Release：
+每開一個新的 shell 都要重新執行一次。先設定 `REL`：照換版總指引（`docs/release-runbook.md`）操作時，它已經從 `release-config.json` 取得；rebuild 等其他用途就手動設定，例如 `export REL=r2026-08-22`。第一行在 `REL` 沒有設定時直接停下來，避免沿用舊值：
 
 ```bash
-export REL=r2026-08-22
+: "${REL:?REL 沒有設定：export REL=r<release date>}"
 export REPO=/srv/openpgx/repo
 export SNAP=/srv/openpgx/raw/gwas_catalog/$REL
 export SCHEMA=gwas_${REL//-/_}            # gwas_r2026_08_22
