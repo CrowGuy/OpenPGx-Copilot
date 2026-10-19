@@ -41,6 +41,8 @@ jobs:
 
       # A skip means the database tests did not run: accept only a bare OK, never OK (skipped=...).
       - name: Tests
+        env:
+          OPENPGX_TEST_DSN: "host=127.0.0.1 port=1 connect_timeout=1"   # temporary: prove a skip fails CI
         run: |
           python -m unittest discover -s tests 2>&1 | tee unittest.log
           grep -qx OK unittest.log || { echo "::error::tests skipped: only a bare OK counts"; exit 1; }
