@@ -1,12 +1,21 @@
 #!/bin/sh
 # Dev/test only: create openpgx_test, apply db/migrations to openpgx and openpgx_test, set dev passwords.
+# With a worktree name, create and migrate only openpgx_test_<name>: that worktree's own test database, so parallel
+# sessions don't reset each other's, and a branch's unmerged migrations never reach openpgx or openpgx_test.
 # Safe to re-run. Connection comes from the standard PG* environment variables (superuser).
 set -eu
 export PGOPTIONS="-c client_min_messages=warning"
 cd "$(dirname "$0")"
-psql -v ON_ERROR_STOP=1 -d openpgx -tAc "SELECT 1 FROM pg_database WHERE datname = 'openpgx_test'" | grep -q 1 \
-  || psql -v ON_ERROR_STOP=1 -d openpgx -c 'CREATE DATABASE openpgx_test'
-for db in openpgx openpgx_test; do
+test_db=openpgx_test
+dbs="openpgx openpgx_test"
+if [ $# -gt 0 ]; then
+  case $1 in '' | *[!A-Za-z0-9_-]*) echo "worktree name: letters, digits, _ and - only" >&2; exit 2 ;; esac
+  test_db=openpgx_test_$1
+  dbs=$test_db
+fi
+psql -v ON_ERROR_STOP=1 -d openpgx -tAc "SELECT 1 FROM pg_database WHERE datname = '$test_db'" | grep -q 1 \
+  || psql -v ON_ERROR_STOP=1 -d openpgx -c "CREATE DATABASE \"$test_db\""
+for db in $dbs; do
   for f in migrations/*.sql; do
     psql -v ON_ERROR_STOP=1 -q -d "$db" -f "$f"
   done

@@ -26,11 +26,13 @@ try:
 except ImportError:  # pragma: no cover - environment without the dependency
     psycopg = None
 
+# A session worktree tests against its own database (db/dev-setup.sh <name>): the tests reset whatever they connect to.
+TEST_DB = f"openpgx_test_{ROOT.name}" if ROOT.parent.match(".claude/worktrees") else "openpgx_test"
 ETL_DSN = os.environ.get(
-    "OPENPGX_TEST_DSN", "host=127.0.0.1 port=5432 dbname=openpgx_test user=etl_writer password=etl_writer"
+    "OPENPGX_TEST_DSN", f"host=127.0.0.1 port=5432 dbname={TEST_DB} user=etl_writer password=etl_writer"
 )
 ANALYST_DSN = os.environ.get(
-    "OPENPGX_TEST_ANALYST_DSN", "host=127.0.0.1 port=5432 dbname=openpgx_test user=analyst_ro password=analyst_ro"
+    "OPENPGX_TEST_ANALYST_DSN", f"host=127.0.0.1 port=5432 dbname={TEST_DB} user=analyst_ro password=analyst_ro"
 )
 SNAPSHOT = ROOT / "tests" / "fixtures" / "r2000-01-01"
 STUDIES_FILE = "gwas-catalog-v1.0.3.1-studies-r2000-01-01.tsv"

@@ -11,3 +11,6 @@
 /release-config.json
 
 __pycache__/
+
+# Session worktrees from EnterWorktree (.claude/skills/start-issue)
+/.claude/worktrees/

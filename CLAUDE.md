@@ -165,6 +165,10 @@ Before reporting completion:
 
 Issues live in GitHub Issues (CrowGuy/OpenPGx-Copilot) via the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
+### Parallel sessions
+
+Several sessions work in this repo at once, so implement each issue in its own worktree: begin with `/start-issue <N>`, end with `/finish-issue <N>`.
+
 ### Triage labels
 
 Default five-role vocabulary (needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix). See `docs/agents/triage-labels.md`.
