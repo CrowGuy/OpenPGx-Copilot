@@ -2,5 +2,8 @@
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true,
     "ponytail@ponytail": true
+  },
+  "worktree": {
+    "baseRef": "fresh"
   }
 }
