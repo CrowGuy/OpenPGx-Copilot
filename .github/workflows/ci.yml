@@ -10,6 +10,9 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash   # explicit bash adds -o pipefail: a failing command in a pipe fails the step
     steps:
       - uses: actions/checkout@v5
 
