@@ -27,16 +27,16 @@ Write every command literally, one command per call; tools come from the conda e
 
 3. Run the full suite. Green is a bare `OK`; anything else, fix it and run again.
 
-4. Push under the repo's branch convention (`feat/…`, `fix/…`, `docs/…`; see `git branch -r`):
+4. Push. The remote branch keeps the local name `worktree-issue-N`, so the plain `git push` of step 6 works:
 
    ```bash
-   git push -u origin HEAD:<type>/<slug>
+   git push -u origin HEAD
    ```
 
 5. Open the PR. Match the title and body style of recent PRs (`gh pr list --state merged --limit 5`). The body ends with `Closes #N`.
 
    ```bash
-   gh pr create --base main --head <type>/<slug> --title "<title>" --body-file <file>
+   gh pr create --base main --head worktree-issue-N --title "<title>" --body-file <file>
    ```
 
 6. Report the PR URL. Keep the worktree, the database and the `in-progress` label: review fixes happen in this worktree. Push fixes with plain `git push`. A PR rebased during review needs `git push --force-with-lease`; ask the user before running it.
@@ -46,10 +46,10 @@ Write every command literally, one command per call; tools come from the conda e
 1. Confirm the merge:
 
    ```bash
-   gh pr view <type>/<slug> --json state --jq .state
+   gh pr view worktree-issue-N --json state --jq .state
    ```
 
-   Go on only on `MERGED`. If you don't know the branch name, look for `Closes #N` with `gh pr list --state merged --search "N in:body"`.
+   Go on only on `MERGED`.
 
 2. Drop the test database:
 
