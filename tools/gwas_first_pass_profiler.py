@@ -22,10 +22,9 @@ import math
 import os
 from pathlib import Path
 import re
-import shutil
 import sqlite3
 import sys
-from typing import Any, Iterable, Iterator, Mapping, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 from urllib.parse import urlparse
 import unicodedata
 import uuid

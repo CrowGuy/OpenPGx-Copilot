@@ -57,3 +57,14 @@ python -m unittest discover -s tests
 ```
 
 測試使用 `openpgx_test`；連不到資料庫或沒有安裝 `psycopg` 時會 skip。要改連其他資料庫，設定 `OPENPGX_TEST_DSN`（`etl_writer`）與 `OPENPGX_TEST_ANALYST_DSN`（`analyst_ro`）。測試會刪除該資料庫中所有 `gwas_r*` schema，並清空 `meta.release`。
+
+## CI
+
+PR 與 push 到 `main` 時，GitHub Actions（`.github/workflows/ci.yml`）依序執行下列檢查，任何一項失敗 CI 就失敗。本機跑同樣的檢查：
+
+| 檢查 | 本機指令 |
+|---|---|
+| `db/migrations/` 與 `docs/adr/` 的四位數字前綴不重複（各自檢查） | `ls db/migrations \| grep -oE '^[0-9]{4}' \| sort \| uniq -d`，`docs/adr` 同理；沒有輸出才算通過 |
+| Lint | `ruff check --line-length 120 tools/ tests/` |
+| Migration 可重複執行：`migrate` 服務跑兩次 | `docker compose -f db/compose.yaml run --rm migrate`，執行兩次 |
+| 測試：Python 3.11、`psycopg[binary]==3.3.6`、`openpyxl==3.1.5` | `python -m unittest discover -s tests`；最後必須是單純的 `OK`，`OK (skipped=…)` 代表資料庫測試沒有跑，CI 會判失敗 |

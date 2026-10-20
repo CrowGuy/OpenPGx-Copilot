@@ -34,7 +34,7 @@ import urllib.request
 import uuid
 import zipfile
 from pathlib import Path
-from typing import Any, BinaryIO, Iterator, Mapping, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 
 
 TOOL_NAME = "gwas-raw-snapshot"

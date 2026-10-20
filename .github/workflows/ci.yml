@@ -1,0 +1,46 @@
+# What this checks and how to run the same locally: db/README.md, section CI.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash   # explicit bash adds -o pipefail: a failing command in a pipe fails the step
+    steps:
+      - uses: actions/checkout@v5
+
+      # Two branches can add the same 0004_*.sql or 0010-*.md without a git conflict.
+      - name: Numbering has no duplicates
+        run: |
+          for dir in db/migrations docs/adr; do
+            dups=$(ls "$dir" | grep -oE '^[0-9]{4}' | sort | uniq -d)
+            if [ -n "$dups" ]; then echo "::error::duplicate numbers in $dir: $dups"; exit 1; fi
+          done
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # Same versions as gwas-env.
+      - run: pip install "psycopg[binary]==3.3.6" openpyxl==3.1.5 ruff==0.15.6
+
+      - run: ruff check --line-length 120 tools/ tests/
+
+      # Every migration is re-applied on each run (db/README.md), so the second run must succeed too.
+      - name: Migrate twice
+        run: |
+          docker compose -f db/compose.yaml run --rm migrate
+          docker compose -f db/compose.yaml run --rm migrate
+
+      # A skip means the database tests did not run: accept only a bare OK, never OK (skipped=...).
+      - name: Tests
+        run: |
+          python -m unittest discover -s tests 2>&1 | tee unittest.log
+          grep -qx OK unittest.log || { echo "::error::tests skipped: only a bare OK counts"; exit 1; }
