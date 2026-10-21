@@ -44,6 +44,7 @@ USER_AGENT = f"{TOOL_NAME}/{TOOL_VERSION}"
 CHUNK_SIZE = 1024 * 1024
 MAX_MALFORMED_EXAMPLES = 20
 SAFE_SNAPSHOT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+ISO_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 RETRYABLE_HTTP_CODES = {408, 425, 429, 500, 502, 503, 504}
 CAPTURED_HTTP_HEADERS = (
     "Content-Length",
@@ -804,23 +805,27 @@ def load_child_accessions(
     return accessions, row_counts, blank_count
 
 
-def latest_date_added(path: Path, profile: FileProfile) -> str:
+def latest_date_added(path: Path, profile: FileProfile) -> tuple[dt.date | None, dict[int, str]]:
     header = read_header(path)
     try:
         date_index = header.index("DATE ADDED TO CATALOG")
     except ValueError as exc:
         raise PipelineError(f"{path.name}: missing DATE ADDED TO CATALOG column") from exc
 
-    latest = dt.date.min
+    latest: dt.date | None = None
+    invalid_dates: dict[int, str] = {}
     for line_number, row in iter_tsv_rows(path, profile.column_count):
         raw_date = row[date_index].strip()
         try:
-            latest = max(latest, dt.date.fromisoformat(raw_date))
-        except ValueError as exc:
-            raise PipelineError(
-                f"{path.name}:{line_number}: invalid DATE ADDED TO CATALOG {raw_date!r}"
-            ) from exc
-    return latest.isoformat()
+            # fromisoformat alone also accepts forms like 20260910 on Python 3.11+.
+            if not ISO_DATE.fullmatch(raw_date):
+                raise ValueError
+            parsed = dt.date.fromisoformat(raw_date)
+        except ValueError:
+            invalid_dates[line_number] = raw_date
+            continue
+        latest = parsed if latest is None else max(latest, parsed)
+    return latest, invalid_dates
 
 
 def validate_cross_file(
@@ -878,8 +883,10 @@ def validate_cross_file(
             profiles["published_ancestries"],
             count_rows=False,
         )
-        studies_latest_date = latest_date_added(study_path, profiles["published_studies"])
-        associations_latest_date = latest_date_added(
+        studies_latest_date, invalid_study_dates = latest_date_added(
+            study_path, profiles["published_studies"]
+        )
+        associations_latest_date, invalid_association_dates = latest_date_added(
             association_path, profiles["published_associations"]
         )
     except PipelineError as exc:
@@ -913,11 +920,20 @@ def validate_cross_file(
             "published_ancestries contains study accessions absent from published_studies; "
             f"count={len(orphan_ancestry_studies)}, examples={sorted(orphan_ancestry_studies)[:20]}"
         )
-    if associations_latest_date > studies_latest_date:
+    if studies_latest_date and associations_latest_date and associations_latest_date > studies_latest_date:
         errors.append(
             "published_studies appears stale: latest DATE ADDED TO CATALOG "
             f"{studies_latest_date} < published_associations {associations_latest_date}"
         )
+    for role, invalid_dates in (
+        ("published_studies", invalid_study_dates),
+        ("published_associations", invalid_association_dates),
+    ):
+        if invalid_dates:
+            errors.append(
+                f"{role} contains invalid DATE ADDED TO CATALOG values; "
+                f"count={len(invalid_dates)}, examples={list(invalid_dates.items())[:20]}"
+            )
     if invalid_declared_counts:
         errors.append(
             "published_studies contains invalid ASSOCIATION COUNT values; "
@@ -958,8 +974,10 @@ def validate_cross_file(
             "orphan_association_study_accessions": len(orphan_association_studies),
             "orphan_ancestry_study_accessions": len(orphan_ancestry_studies),
             "association_count_mismatched_studies": association_count_mismatch_total,
-            "published_studies_latest_date_added": studies_latest_date,
-            "published_associations_latest_date_added": associations_latest_date,
+            "published_studies_latest_date_added": studies_latest_date and studies_latest_date.isoformat(),
+            "published_associations_latest_date_added": (
+                associations_latest_date and associations_latest_date.isoformat()
+            ),
         }
     )
     return {

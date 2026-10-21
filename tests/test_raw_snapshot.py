@@ -96,15 +96,23 @@ class StaleStudiesTest(unittest.TestCase):
         self.assertEqual(report["errors"], [])
         self.assertEqual(report["warnings"], [])
 
-    def test_invalid_date_fails_with_line_number(self) -> None:
+    def test_invalid_dates_are_reported_without_hiding_other_errors(self) -> None:
+        # 20260927 is not YYYY-MM-DD, so it is invalid and does not count as the latest date.
         report = validate(
             studies=["2026-09-10\tGCST1"],
-            associations=["not a date\tGCST1"],
+            associations=["\tGCST1", "20260927\tGCST2"],
         )
         self.assertEqual(report["status"], "failed")
         self.assertEqual(
-            report["errors"], ["published_associations.tsv:2: invalid DATE ADDED TO CATALOG 'not a date'"]
+            report["errors"],
+            [
+                "published_associations contains study accessions absent from published_studies; "
+                "count=1, examples=['GCST2']",
+                "published_associations contains invalid DATE ADDED TO CATALOG values; "
+                "count=2, examples=[(2, ''), (3, '20260927')]",
+            ],
         )
+        self.assertIsNone(report["metrics"]["published_associations_latest_date_added"])
 
 
 if __name__ == "__main__":

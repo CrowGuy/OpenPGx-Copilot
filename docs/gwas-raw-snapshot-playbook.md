@@ -338,7 +338,7 @@ awk '{r+=$1} END{print "rows="r, "studies="NR}' "$GWAS_RUN_DIR/missing-studies.t
 - 不要為了單一版本調高 Rejection Threshold 或修改驗證規則。
 - **連續跳過最多 2 版**（#31 決定）：
   - r2026-10-03 算第 1 次跳過；下一版若同樣原因失敗算第 2 次，照樣跳過。
-  - 第 3 版仍然因同樣原因失敗時，開 issue 決定備案的細節（方向見 #31：孤兒列不進 Curated Layer、保留來源列與原因、改用獨立上限），不要在操作當下自行放寬。
+  - 第 3 版仍然因同樣原因失敗時，開 issue 決定備案的細節，不要在操作當下自行放寬。方向見 #31：孤兒列像 Rejected Row 一樣保留來源列與原因，但不計入 Rejection Threshold，改用獨立上限；這會偏離 ADR-0007 的單一 Rejection Threshold，屆時一併修改 ADR-0007 與 CurationContract。
   - 「同樣原因」：cross-file validation 出現孤兒列（associations 或 ancestries 的 study 不在 studies 檔裡），或 `published_studies appears stale` 檢查失敗。其他失敗照第 7 節 `review_required` 流程處理，不計入跳過次數。
   - 中間只要有任何一版換版成功，計數就歸零。
 
