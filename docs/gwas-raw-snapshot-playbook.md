@@ -253,6 +253,7 @@ Published core 三份檔案必須一起存在，並檢查：
 - associations、ancestries 不可引用 studies 中不存在的 accession。
 - studies 的 `ASSOCIATION COUNT` 必須是非負整數。
 - 宣告的 association count 必須與 associations 實際筆數一致。
+- associations 最新的 `DATE ADDED TO CATALOG` 不可比 studies 新。兩個日期寫在 `metrics` 的 `published_studies_latest_date_added` 與 `published_associations_latest_date_added`。
 
 Published study 沒有 ancestry row 目前列為 warning；其他上述不一致為 error。
 
@@ -313,7 +314,11 @@ Ensembl 版本變更可能改變 variant-to-gene mapping，不能只修改 `expe
 
 ### 8.1 Cross-file validation 失敗：來源資料不一致
 
-例如 `published_associations contains study accessions absent from published_studies`。這是官方發布的檔案彼此對不上，不是下載或程式錯誤；重跑不會改善。下載的檔案留在 staging，直接用來量化影響，不需要重新下載：
+例如 `published_associations contains study accessions absent from published_studies`。這是官方發布的檔案彼此對不上，不是下載或程式錯誤；重跑不會改善。下載的檔案留在 staging，直接用來量化影響，不需要重新下載。
+
+若同時出現 `published_studies appears stale: latest DATE ADDED TO CATALOG <studies 日期> < published_associations <associations 日期>`，表示上游這一版沒有重新產生 studies 檔，內容停在較舊的版本，所以 associations 新加入的 study 都找不到（r2026-10-03 即是如此，見 #31）。這是上游的問題，重跑不會改善。
+
+量化影響：
 
 ```bash
 ST=/srv/openpgx/raw/gwas_catalog/.staging/<log 裡的 staging 目錄>
@@ -331,7 +336,11 @@ awk '{r+=$1} END{print "rows="r, "studies="NR}' "$GWAS_RUN_DIR/missing-studies.t
 
 - 受影響的列數超過 CurationContract 的 Rejection Threshold（associations 資料列的 0.1%）：**跳過這一版**，等下一個 Source Release。放寬 RawSnapshot 的檢查也沒用，load 時一樣會超過門檻。
 - 不要為了單一版本調高 Rejection Threshold 或修改驗證規則。
-- **連續兩版同樣原因失敗**：代表這是來源的常態而不是偶發，開 issue 討論調整做法（會修改 ADR-0007 與 CurationContract），不要在操作當下自行放寬。
+- **連續跳過最多 2 版**（#31 決定）：
+  - r2026-10-03 算第 1 次跳過；下一版若同樣原因失敗算第 2 次，照樣跳過。
+  - 第 3 版仍然因同樣原因失敗時，開 issue 決定備案的細節，不要在操作當下自行放寬。方向見 #31：孤兒列像 Rejected Row 一樣保留來源列與原因，但不計入 Rejection Threshold，改用獨立上限；這會偏離 ADR-0007 的單一 Rejection Threshold，屆時一併修改 ADR-0007 與 CurationContract。
+  - 「同樣原因」：cross-file validation 出現孤兒列（associations 或 ancestries 的 study 不在 studies 檔裡），或 `published_studies appears stale` 檢查失敗。其他失敗照第 7 節 `review_required` 流程處理，不計入跳過次數。
+  - 中間只要有任何一版換版成功，計數就歸零。
 
 跳過時：
 
