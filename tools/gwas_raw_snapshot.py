@@ -804,6 +804,25 @@ def load_child_accessions(
     return accessions, row_counts, blank_count
 
 
+def latest_date_added(path: Path, profile: FileProfile) -> str:
+    header = read_header(path)
+    try:
+        date_index = header.index("DATE ADDED TO CATALOG")
+    except ValueError as exc:
+        raise PipelineError(f"{path.name}: missing DATE ADDED TO CATALOG column") from exc
+
+    latest = dt.date.min
+    for line_number, row in iter_tsv_rows(path, profile.column_count):
+        raw_date = row[date_index].strip()
+        try:
+            latest = max(latest, dt.date.fromisoformat(raw_date))
+        except ValueError as exc:
+            raise PipelineError(
+                f"{path.name}:{line_number}: invalid DATE ADDED TO CATALOG {raw_date!r}"
+            ) from exc
+    return latest.isoformat()
+
+
 def validate_cross_file(
     config: PipelineConfig,
     staging: Path,
@@ -859,6 +878,10 @@ def validate_cross_file(
             profiles["published_ancestries"],
             count_rows=False,
         )
+        studies_latest_date = latest_date_added(study_path, profiles["published_studies"])
+        associations_latest_date = latest_date_added(
+            association_path, profiles["published_associations"]
+        )
     except PipelineError as exc:
         errors.append(str(exc))
         return {"status": "failed", "errors": errors, "warnings": warnings, "metrics": metrics}
@@ -889,6 +912,11 @@ def validate_cross_file(
         errors.append(
             "published_ancestries contains study accessions absent from published_studies; "
             f"count={len(orphan_ancestry_studies)}, examples={sorted(orphan_ancestry_studies)[:20]}"
+        )
+    if associations_latest_date > studies_latest_date:
+        errors.append(
+            "published_studies appears stale: latest DATE ADDED TO CATALOG "
+            f"{studies_latest_date} < published_associations {associations_latest_date}"
         )
     if invalid_declared_counts:
         errors.append(
@@ -930,6 +958,8 @@ def validate_cross_file(
             "orphan_association_study_accessions": len(orphan_association_studies),
             "orphan_ancestry_study_accessions": len(orphan_ancestry_studies),
             "association_count_mismatched_studies": association_count_mismatch_total,
+            "published_studies_latest_date_added": studies_latest_date,
+            "published_associations_latest_date_added": associations_latest_date,
         }
     )
     return {
