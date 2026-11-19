@@ -329,12 +329,25 @@ col(){ head -1 "$1" | tr '\t' '\n' | grep -nx "$2" | cut -d: -f1; }
 sa=$(col "$S" 'STUDY ACCESSION'); aa=$(col "$A" 'STUDY ACCESSION')
 awk -F'\t' -v s="$sa" -v a="$aa" 'FNR==1{next} NR==FNR{ok[$s]=1;next} !($a in ok){print $a}' "$S" "$A" \
   | sort | uniq -c | sort -rn > "$GWAS_RUN_DIR/missing-studies.txt"
-awk '{r+=$1} END{print "rows="r, "studies="NR}' "$GWAS_RUN_DIR/missing-studies.txt"
+awk -v n="$(awk 'END{print NR-1}' "$A")" '{r+=$1} END{printf "rows=%d studies=%d associations_rows=%d orphan_pct=%.3f%%\n", r, NR, n, 100*r/n}' "$GWAS_RUN_DIR/missing-studies.txt"
 ```
+
+`orphan_pct` 是孤兒列佔 associations 資料列（不含 header）的比例，直接和下面的 0.1% 比較。
+
+再把孤兒 study 分成兩類：出現在 `unpublished_studies` 的（`in_unpublished`），和 studies、unpublished_studies 都沒有的（`nowhere`）。兩類的 study 數、列數加總應等於上面的 `studies=`、`rows=`：
+
+```bash
+U=$(find . -name 'gwas-catalog-v1.0.3.1-unpublished-studies-r*.tsv')
+ua=$(col "$U" 'STUDY ACCESSION')
+awk -F'\t' -v u="$ua" 'NR==FNR{if(FNR>1)un[$u]=1;next} {split($0,f," "); if(f[2] in un){ir+=f[1];is++}else{nr+=f[1];ns++}} END{print "in_unpublished: studies="is+0, "rows="ir+0; print "nowhere: studies="ns+0, "rows="nr+0}' "$U" "$GWAS_RUN_DIR/missing-studies.txt"
+```
+
+`missing-studies.txt` 是 `uniq -c` 的輸出，欄位以**空白**分隔，不能用 `-F'\t'` 讀：那樣 `$2` 永遠是空的，`in_unpublished` 必然是 0（r2026-10-03、r2026-10-29 都犯過，見 #31）。上面用 `split($0,f," ")` 切欄，也會略過開頭的空白。
 
 判斷：
 
 - 受影響的列數超過 CurationContract 的 Rejection Threshold（associations 資料列的 0.1%）：**跳過這一版**，等下一個 Source Release。放寬 RawSnapshot 的檢查也沒用，load 時一樣會超過門檻。
+- `in_unpublished` 與 `nowhere` 兩類的 study 數、列數分別記錄在 issue 裡（如 #31 的表格）：備案可能要分開處理兩類（#31 2026-10-20 的決定）。
 - 不要為了單一版本調高 Rejection Threshold 或修改驗證規則。
 - **連續跳過最多 2 版**（#31 決定）：
   - r2026-10-03 算第 1 次跳過；下一版若同樣原因失敗算第 2 次，照樣跳過。
