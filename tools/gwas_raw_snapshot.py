@@ -910,18 +910,20 @@ def validate_cross_file(
         errors.append(
             f"published_ancestries: {blank_ancestry_accessions} rows have empty STUDY ACCESSION"
         )
+    # Orphans and a stale studies file are warnings (#43, ADR-0007): the loader keeps those rows out of the Curated
+    # Layer as Orphan Rows or Rejected Rows, and its thresholds decide whether the Release loads.
     if orphan_association_studies:
-        errors.append(
+        warnings.append(
             "published_associations contains study accessions absent from published_studies; "
             f"count={len(orphan_association_studies)}, examples={sorted(orphan_association_studies)[:20]}"
         )
     if orphan_ancestry_studies:
-        errors.append(
+        warnings.append(
             "published_ancestries contains study accessions absent from published_studies; "
             f"count={len(orphan_ancestry_studies)}, examples={sorted(orphan_ancestry_studies)[:20]}"
         )
     if studies_latest_date and associations_latest_date and associations_latest_date > studies_latest_date:
-        errors.append(
+        warnings.append(
             "published_studies appears stale: latest DATE ADDED TO CATALOG "
             f"{studies_latest_date} < published_associations {associations_latest_date}"
         )

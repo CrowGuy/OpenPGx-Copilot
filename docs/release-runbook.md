@@ -17,8 +17,7 @@
               │                │                  │                  │
        no_new_release      驗證失敗          新的未涵蓋問題       失敗／不通過
               ▼                ▼                  ▼                  ▼
-            結束        raw §8／§8.1，     先討論 CurationContract   ETL §6.1／§6.2
-                        常見是跳過這一版
+            結束            raw §8          先討論 CurationContract   ETL §6.1／§6.2
 ```
 
 ---
@@ -112,12 +111,14 @@ echo "$REL"
 export SNAP=/srv/openpgx/raw/gwas_catalog/$REL
 echo "export SNAP=$SNAP" >> "$GWAS_RUN_DIR/env.sh"
 jq -r '.files[] | "\(.role)\t\(.metrics.data_row_count // .data_row_count)"' "$SNAP/manifest.json"   # 筆數貼到 issue
+jq '.warnings' "$SNAP/validation-report.json"   # 貼到 issue
 ```
+
+warning 有孤兒 study 或 `published_studies appears stale` 時照常繼續：load 會把這些列變成 Orphan Row 或 Rejected Row，第 5 步審查（raw §8.1）。
 
 | 失敗訊息 | 下一步 |
 |---|---|
-| `VALIDATION ERROR: ... absent from published_studies` 等 cross-file 錯誤 | raw §8.1：量化影響，超過 Rejection Threshold 就**跳過這一版**（例如 #31），到第 7 步收尾 |
-| 其他下載或驗證錯誤 | raw §8 |
+| 下載或驗證錯誤 | raw §8 |
 
 ---
 
@@ -226,8 +227,8 @@ Promote 後的狀態總覽（ETL §2）應該是：
 |---|---|---|
 | Discovery 是 `no_new_release` | 結束 | raw §5.3 |
 | Discovery 是 `review_required` | 停止調查，可能要更新 DatasetContract | raw §7 |
-| snapshot cross-file 驗證失敗 | 量化影響，超過 Rejection Threshold 就跳過這一版 | raw §8.1 |
-| 同樣原因連續兩版失敗 | 開 issue 討論調整做法，不要在操作當下放寬規則 | raw §8.1 |
+| snapshot 有孤兒 study 或 studies 檔過期的 warning | 照常載入，審查時看 Orphan Row | raw §8.1、ETL §4.5 |
+| load 因 Orphan Row 超過 `orphan_threshold` 失敗 | 跳過這一版，開 issue；不要在操作當下放寬規則 | raw §8.1 |
 | Profile 出現未涵蓋的新問題 | 先不要載入，討論 CurationContract 新版 | profile 第八節 |
 | load 失敗 | 看錯誤訊息，不要直接調高 threshold | ETL §6.1 |
 | 審查不通過 | 捨棄 Candidate，snapshot 保留 | ETL §6.2 |

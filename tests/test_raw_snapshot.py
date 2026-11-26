@@ -68,15 +68,17 @@ def validate(studies: list[str], associations: list[str]) -> dict:
 
 
 class StaleStudiesTest(unittest.TestCase):
-    def test_r2026_10_03_reports_orphans_and_stale_studies(self) -> None:
+    def test_r2026_10_03_warns_of_orphans_and_stale_studies(self) -> None:
         # The studies file stops at 2026-09-10; associations already has a study added on 2026-09-27.
+        # Warnings, not errors: the loader turns these rows into Orphan Rows (#43, ADR-0007).
         report = validate(
             studies=["2026-09-10\tGCST1"],
             associations=["2026-09-10\tGCST1", "2026-09-27\tGCST2"],
         )
-        self.assertEqual(report["status"], "failed")
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["errors"], [])
         self.assertEqual(
-            report["errors"],
+            report["warnings"],
             [
                 "published_associations contains study accessions absent from published_studies; "
                 "count=1, examples=['GCST2']",
@@ -106,10 +108,15 @@ class StaleStudiesTest(unittest.TestCase):
         self.assertEqual(
             report["errors"],
             [
-                "published_associations contains study accessions absent from published_studies; "
-                "count=1, examples=['GCST2']",
                 "published_associations contains invalid DATE ADDED TO CATALOG values; "
                 "count=2, examples=[(2, ''), (3, '20260927')]",
+            ],
+        )
+        self.assertEqual(
+            report["warnings"],
+            [
+                "published_associations contains study accessions absent from published_studies; "
+                "count=1, examples=['GCST2']",
             ],
         )
         self.assertIsNone(report["metrics"]["published_associations_latest_date_added"])

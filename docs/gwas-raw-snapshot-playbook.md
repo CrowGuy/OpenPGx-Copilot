@@ -166,6 +166,8 @@ jq -e '.status == "passed"' validation-report.json >/dev/null
 
 只有上述檢查全部成功，這份 snapshot 才算發布完成；之後的 Discovery 會自動以它為 current manifest（第 5.1 節）。
 
+`jq '.warnings' validation-report.json` 出現孤兒 study 或 `published_studies appears stale` 時，snapshot 照樣發布：把 warning 貼到換版 issue，照第 8.1 節繼續。
+
 不得修改 baseline 目錄中的 TSV、manifest、checksum、validation report 或 `_SUCCESS`。
 
 ### 4.5 基準完成後強化 row-count gate
@@ -255,7 +257,13 @@ Published core 三份檔案必須一起存在，並檢查：
 - 宣告的 association count 必須與 associations 實際筆數一致。
 - associations 最新的 `DATE ADDED TO CATALOG` 不可比 studies 新。兩個日期寫在 `metrics` 的 `published_studies_latest_date_added` 與 `published_associations_latest_date_added`。
 
-Published study 沒有 ancestry row 目前列為 warning；其他上述不一致為 error。
+下列為 warning，其他上述不一致為 error：
+
+- Published study 沒有 ancestry row。
+- associations、ancestries 引用 studies 中不存在的 accession（孤兒 study）。
+- associations 最新的 `DATE ADDED TO CATALOG` 比 studies 新（studies 檔過期）。
+
+孤兒列交給 load 處理（ADR-0007、#43）：associations 中比 studies 檔新的列成為 Orphan Row，受 `orphan_threshold` 限制；其他孤兒列（包括 ancestries 的）成為 Rejected Row，受 Rejection Threshold 限制。見第 8.1 節。
 
 ## 7. `review_required` 處理流程
 
@@ -312,16 +320,21 @@ Ensembl 版本變更可能改變 variant-to-gene mapping，不能只修改 `expe
 
 若正式 snapshot directory 已存在，程式會拒絕覆寫。不要刪除正式 snapshot 來讓重跑成功；應先確認是否已完成發布，或改用經核准的新 snapshot revision。
 
-### 8.1 Cross-file validation 失敗：來源資料不一致
+### 8.1 孤兒 study 與過期的 studies 檔
 
-例如 `published_associations contains study accessions absent from published_studies`。這是官方發布的檔案彼此對不上，不是下載或程式錯誤；重跑不會改善。下載的檔案留在 staging，直接用來量化影響，不需要重新下載。
+例如 warning `published_associations contains study accessions absent from published_studies`。這是官方發布的檔案彼此對不上，不是下載或程式錯誤；重跑不會改善。
 
-若同時出現 `published_studies appears stale: latest DATE ADDED TO CATALOG <studies 日期> < published_associations <associations 日期>`，表示上游這一版沒有重新產生 studies 檔，內容停在較舊的版本，所以 associations 新加入的 study 都找不到（r2026-10-03 即是如此，見 #31）。這是上游的問題，重跑不會改善。
+若同時出現 `published_studies appears stale: latest DATE ADDED TO CATALOG <studies 日期> < published_associations <associations 日期>`，表示上游這一版沒有重新產生 studies 檔，內容停在較舊的版本，所以 associations 新加入的 study 都找不到（r2026-10-03 起連續數版如此，見 #31、#43）。
 
-量化影響：
+這兩項是 warning，snapshot 照樣發布（第 6.2 節），照常載入。load 把孤兒列分成兩類，各有上限（ADR-0007）：
+
+- associations 中 `DATE ADDED TO CATALOG` 晚於 studies 檔最新日期、而且沒有其他違規的列：Orphan Row，受 CurationContract 的 `orphan_threshold` 限制。
+- 其他孤兒列（studies 檔缺了舊 study、ancestries 的孤兒、日期無效或還有其他違規）：Rejected Row，原因是 `STUDY ACCESSION: foreign_key`，受 Rejection Threshold 限制。
+
+兩類的列數都在 load report（ETL §4.2、§4.3）。要在 issue 記錄更細的分類時，用下面的指令量化：
 
 ```bash
-ST=/srv/openpgx/raw/gwas_catalog/.staging/<log 裡的 staging 目錄>
+ST="$SNAP"   # 已發布的 snapshot 目錄（release-runbook 第 3 步）
 cd "$ST"
 A=$(find . -name 'gwas-catalog-download-associations-alt-full.tsv')
 S=$(find . -name 'gwas-catalog-v1.0.3.1-studies-r*.tsv')
@@ -332,7 +345,7 @@ awk -F'\t' -v s="$sa" -v a="$aa" 'FNR==1{next} NR==FNR{ok[$s]=1;next} !($a in ok
 awk -v n="$(awk 'END{print NR-1}' "$A")" '{r+=$1} END{printf "rows=%d studies=%d associations_rows=%d orphan_pct=%.3f%%\n", r, NR, n, 100*r/n}' "$GWAS_RUN_DIR/missing-studies.txt"
 ```
 
-`orphan_pct` 是孤兒列佔 associations 資料列（不含 header）的比例，直接和下面的 0.1% 比較。
+`orphan_pct` 是孤兒列佔 associations 資料列（不含 header）的比例。它同時包含 Orphan Row 與找不到 study 的 Rejected Row，所以不會小於 load report 的 `orphan_ratio`。
 
 再把孤兒 study 分成兩類：出現在 `unpublished_studies` 的（`in_unpublished`），和 studies、unpublished_studies 都沒有的（`nowhere`）。兩類的 study 數、列數加總應等於上面的 `studies=`、`rows=`：
 
@@ -346,21 +359,16 @@ awk -F'\t' -v u="$ua" 'NR==FNR{if(FNR>1)un[$u]=1;next} {split($0,f," "); if(f[2]
 
 判斷：
 
-- 受影響的列數超過 CurationContract 的 Rejection Threshold（associations 資料列的 0.1%）：**跳過這一版**，等下一個 Source Release。放寬 RawSnapshot 的檢查也沒用，load 時一樣會超過門檻。
-- `in_unpublished` 與 `nowhere` 兩類的 study 數、列數分別記錄在 issue 裡（如 #31 的表格）：備案可能要分開處理兩類（#31 2026-10-20 的決定）。
-- 不要為了單一版本調高 Rejection Threshold 或修改驗證規則。
-- **連續跳過最多 2 版**（#31 決定）：
-  - r2026-10-03 算第 1 次跳過；下一版若同樣原因失敗算第 2 次，照樣跳過。
-  - 第 3 版仍然因同樣原因失敗時，開 issue 決定備案的細節，不要在操作當下自行放寬。方向見 #31：孤兒列像 Rejected Row 一樣保留來源列與原因，但不計入 Rejection Threshold，改用獨立上限；這會偏離 ADR-0007 的單一 Rejection Threshold，屆時一併修改 ADR-0007 與 CurationContract。
-  - 「同樣原因」：cross-file validation 出現孤兒列（associations 或 ancestries 的 study 不在 studies 檔裡），或 `published_studies appears stale` 檢查失敗。其他失敗照第 7 節 `review_required` 流程處理，不計入跳過次數。
-  - 中間只要有任何一版換版成功，計數就歸零。
+- load 成功：照 ETL §4.5 審查 Candidate。Orphan Row 的列數、`orphan_ratio` 與 studies 檔最新日期記在換版 issue，可以 Promote。
+- load 失敗，`Orphan Row ratio ... exceeds orphan_threshold`：studies 檔落後太久。**跳過這一版**，開 issue 討論（例如改用 v1.0 studies 檔或調整上限）。
+- load 失敗，`published_associations: Rejected Row ratio ... exceeds Rejection Threshold`，而且 `rejection_reasons` 主要是 `STUDY ACCESSION: foreign_key`：studies 檔缺了舊 study，可能整份壞掉。**跳過這一版**，開 issue。
+- 不要在操作當下調高 Rejection Threshold、`orphan_threshold` 或修改驗證規則。
 
 跳過時：
 
-1. 把 `validation-report.json` 複製到 `$GWAS_RUN_DIR`，連同 `missing-studies.txt` 一起保留。
-2. 照第 9.1 節把 staging 移到 `.failed`；下一版成功換版後可刪除。
+1. 把 `validation-report.json`（在 snapshot 目錄）複製到 `$GWAS_RUN_DIR`，連同 load 的 log 與 `missing-studies.txt` 一起保留。
+2. snapshot 保留：下一次 Discovery 從它比較，不會再下載同一版（第 5.1 節）。
 3. 開 issue 記錄跳過的 release、受影響列數與判斷（例如 #31）。
-4. `GWAS_CURRENT_MANIFEST` 不變。下一次 Discovery 會直接找到最新的 release，被跳過的版本不需要處理。
 
 ## 9. Staging 與 lock 清理
 

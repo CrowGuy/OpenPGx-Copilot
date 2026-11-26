@@ -112,6 +112,10 @@ _Avoid_: bad row、error、dropped row
 CurationContract 規定的 Rejected Row 比例上限；超過時整個 Release 載入失敗。
 _Avoid_: tolerance、容錯率
 
+**Orphan Row**:
+`published_associations` 中，引用的 study 不在同一個 RawSnapshot 的 studies 檔，而且 `DATE ADDED TO CATALOG` 晚於 studies 檔最新日期的來源列；代表 studies 檔落後於 associations。和 Rejected Row 一樣不進 Curated Layer、保留原因，但不計入 Rejection Threshold；比例超過 CurationContract 的 `orphan_threshold` 時，整個 Release 載入失敗。
+_Avoid_: 把它當成 Rejected Row、missing study row
+
 **Release Pin**:
 下游（例如產生 Rule Evidence 的整理流程）宣告自己固定使用某個特定 Release，而不是跟隨 Active Release。
 _Avoid_: lock、依賴版本

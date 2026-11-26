@@ -161,7 +161,9 @@ CREATE TABLE trait_mapping (
 );
 CREATE INDEX ON trait_mapping (efo_uri);
 
--- Rejected Rows (ADR-0007): one row per Required Field violation of a source row kept out of the Curated Layer.
+-- Source rows kept out of the Curated Layer (ADR-0007), one row per violation: Rejected Rows, and Orphan Rows with
+-- reason 'orphan' (#43). Orphan Rows do not count toward the Rejection Threshold: count Rejected Rows with
+-- reason <> 'orphan'.
 CREATE TABLE rejected_row (
     source_file text NOT NULL,
     source_line integer NOT NULL,
