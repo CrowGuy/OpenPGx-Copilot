@@ -175,7 +175,11 @@ SELECT d.key AS dataset,
        (d.value ->> 'rejected_rows')::bigint AS rejected,
        round((p.load_report -> d.key ->> 'rejected_ratio')::numeric, 6) AS prev_ratio,
        round((d.value ->> 'rejected_ratio')::numeric, 6) AS ratio,
-       (d.value ->> 'rejection_threshold')::numeric AS threshold
+       (d.value ->> 'rejection_threshold')::numeric AS threshold,
+       (d.value ->> 'orphan_rows')::bigint AS orphans,
+       round((d.value ->> 'orphan_ratio')::numeric, 6) AS orphan_ratio,
+       (d.value ->> 'orphan_threshold')::numeric AS orphan_threshold,
+       d.value ->> 'studies_latest_date_added' AS studies_latest
 FROM meta.release c
 CROSS JOIN jsonb_each(c.load_report) d
 LEFT JOIN meta.release p ON p.status = 'active'
@@ -183,6 +187,8 @@ WHERE c.release_id = '$REL'
 ORDER BY d.key;
 SQL
 ```
+
+只有設了 `orphan_threshold` 的資料集（associations）有 `orphan*` 與 `studies_latest` 欄位；`rejected` 不含 Orphan Row（ADR-0007、#43）。
 
 ### 4.3 拒絕原因與設成空值的欄位
 
@@ -198,7 +204,7 @@ ORDER BY dataset, r.release_id;
 SQL
 ```
 
-Rejected Row 本身存在 Candidate 的 schema 裡，可以逐列看原因與原始值：
+Rejected Row 與 Orphan Row（`reason` 是 `orphan`）本身存在 Candidate 的 schema 裡，可以逐列看原因與原始值：
 
 ```bash
 psql -v ON_ERROR_STOP=1 -c "SELECT source_file, source_line, source_column, reason, left(value, 80) AS value FROM $SCHEMA.rejected_row ORDER BY source_file, source_line LIMIT 50"
@@ -221,6 +227,7 @@ psql -v ON_ERROR_STOP=1 -c "SELECT a.association_id, a.study_accession, a.diseas
 - [ ] 和上一個 Release 相比，`ratio` 沒有明顯上升，4.3 沒有出現新的拒絕原因或新的空值欄位。
 - [ ] `source_rows` 與 `loaded_rows` 沒有減少。GWAS Catalog 通常只增不減，減少或大幅跳動要先找到原因。
 - [ ] 4.3 的 Rejected Row 原因看得懂，而且是來源本身的問題，不是 CurationContract 寫錯。
+- [ ] `orphans` 大於 0 時（studies 檔落後，raw §8.1）：`orphan_ratio` 明顯低於 `orphan_threshold`，`studies_latest` 等於 RawSnapshot warning 裡的 studies 日期。數字記在換版 issue；這本身不妨礙 Promote。
 - [ ] 4.4 抽查的資料合理。
 
 **`r2026-08-22`（第一次換版）的預期**：沒有上一個 Release 可以比對；associations 的 Rejected Row 約 1 列（#12）。差很多就不要 Promote，先查原因。
@@ -288,6 +295,7 @@ load 在單一 transaction 內執行，任何錯誤（包括 SSH 斷線、Ctrl-C
 | `Snapshot has no _SUCCESS marker`、`does not match manifest.json`、`Manifest file is absent` | RawSnapshot 不完整或被改過。不要修改已發布的 snapshot，依 `docs/gwas-raw-snapshot-playbook.md` 處理 |
 | `header does not match DatasetContract expected_header`、`format_version ... does not match` | 來源改版。照 Review Required 流程更新 DatasetContract／CurationContract |
 | `Rejected Row ratio ... exceeds Rejection Threshold` | 拒絕列太多。往上看同一個資料集的 `Load report for ...` 那一行的 `rejection_reasons` 找原因；不要直接調高 threshold |
+| `Orphan Row ratio ... exceeds orphan_threshold` | studies 檔落後太久（ADR-0007）。照 raw §8.1 跳過這一版並開 issue；不要直接調高 `orphan_threshold` |
 | `duplicate ...` | 違反 `unique` 規則，來源出現重複的鍵 |
 | `Malformed CurationContract: ...` | CurationContract 格式錯誤 |
 

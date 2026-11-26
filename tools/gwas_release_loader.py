@@ -9,6 +9,8 @@ rebuild: an `active` or `retired` Release whose schema is gone -> its schema aga
 
 Connection: --dsn, or the standard libpq PG* environment variables / ~/.pgpass when omitted.
 Rows violating the CurationContract become Rejected Rows; over the Rejection Threshold the whole load fails (ADR-0007).
+A dataset with an orphan_threshold turns rows of a study missing from the referenced file, added after that file's latest
+DATE ADDED TO CATALOG, into Orphan Rows instead: kept out the same way, but limited by orphan_threshold (#43).
 Before connecting, load checks its inputs (#6): the RawSnapshot's _SUCCESS marker and checksums, the CurationContract's
 shape, and each loaded file's Load Policy and header (DatasetContract) and format_version (CurationContract).
 Scope: studies, associations, ancestries and trait mappings (#4, #5, #7, #8, #9).
@@ -72,6 +74,8 @@ TRAIT_SPLIT_POLICY = {
 }
 # Trait URI split_rule target_table -> the parent key column each of its rows repeats.
 TRAIT_TABLES = {"association_trait": "association_id", "study_trait": "study_accession"}
+# Orphan Rows are told apart from Rejected Rows by this date column, in the dataset and in the one it references.
+ORPHAN_DATE_COLUMN = "DATE ADDED TO CATALOG"
 SNP_COLUMNS = ("association_id", "position", "variant_token", "variant_kind", "rsid", "chr", "pos", "risk_allele")
 
 
@@ -100,6 +104,14 @@ def loaded_datasets(contract: Any) -> list[dict[str, Any]]:
         if not ok:
             raise LoaderError(f"Malformed CurationContract: {problem}")
 
+    def is_ratio(value: Any) -> bool:
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1
+
+    def has_date_column(dataset: dict[str, Any] | None) -> bool:
+        return dataset is not None and any(
+            c.get("source_column") == ORPHAN_DATE_COLUMN and c.get("curated_type") == "date" for c in dataset["columns"]
+        )
+
     require(isinstance(contract, dict), "root must be an object")
     require(type(contract.get("version")) is int, "version must be an integer")
     require(
@@ -112,10 +124,8 @@ def loaded_datasets(contract: Any) -> list[dict[str, Any]]:
         matches = [d for d in contract["datasets"] if isinstance(d, dict) and d.get("role") == role]
         require(len(matches) == 1, f"needs exactly one dataset with role {role}")
         dataset = matches[0]
-        threshold = dataset.get("rejection_threshold")
         require(
-            isinstance(threshold, (int, float)) and not isinstance(threshold, bool) and 0 <= threshold <= 1,
-            f"{role}.rejection_threshold must be a number between 0 and 1",
+            is_ratio(dataset.get("rejection_threshold")), f"{role}.rejection_threshold must be a number between 0 and 1"
         )
         require(isinstance(dataset.get("curated_table"), str), f"{role}.curated_table must be a string")
         for key in ("dataset_rules", "columns"):
@@ -169,6 +179,20 @@ def loaded_datasets(contract: Any) -> list[dict[str, Any]]:
                     "a separator and a token_pattern",
                 )
         datasets.append(dataset)
+    by_role = {dataset["role"]: dataset for dataset in datasets}
+    for dataset in datasets:
+        if "orphan_threshold" not in dataset:
+            continue
+        role = dataset["role"]
+        require(is_ratio(dataset["orphan_threshold"]), f"{role}.orphan_threshold must be a number between 0 and 1")
+        foreign_keys = [rule for rule in dataset["dataset_rules"] if rule["rule"] == "foreign_key"]
+        require(
+            len(foreign_keys) == 1
+            and has_date_column(dataset)
+            and has_date_column(by_role.get(str(foreign_keys[0].get("references")).split(".")[0])),
+            f"{role}.orphan_threshold needs exactly one foreign_key rule, and a {ORPHAN_DATE_COLUMN} date column "
+            "in this dataset and in the one it references",
+        )
     return datasets
 
 
@@ -264,11 +288,16 @@ def split_variants(snps: str, aligned: list[str], rule: dict[str, Any]) -> tuple
 
 
 def load_dataset(
-    conn: psycopg.Connection[Any], path: Path, dataset: dict[str, Any], loaded_keys: dict[str, set[Any]]
+    conn: psycopg.Connection[Any],
+    path: Path,
+    dataset: dict[str, Any],
+    loaded_keys: dict[str, set[Any]],
+    latest_added: dict[str, dt.date | None],
 ) -> dict[str, Any]:
     """COPY one dataset into its curated table and return its load report.
 
     `loaded_keys` maps each foreign_key reference ("<role>.<source column>") to the values loaded so far.
+    `latest_added` maps each loaded role with an ORPHAN_DATE_COLUMN to its latest loaded date; this adds `role`.
     """
     role, columns = dataset["role"], dataset["columns"]
     header = read_header(path)
@@ -285,6 +314,12 @@ def load_dataset(
         elif rule["rule"] == "foreign_key":
             (column,) = rule["columns"]
             foreign.append((column, header.index(column), loaded_keys[rule["references"]]))
+    has_date = any(c["source_column"] == ORPHAN_DATE_COLUMN and c["curated_type"] == "date" for c in columns)
+    latest: dt.date | None = None
+    orphan_cutoff: dt.date | None = None
+    if "orphan_threshold" in dataset:
+        (foreign_key,) = [rule for rule in dataset["dataset_rules"] if rule["rule"] == "foreign_key"]
+        orphan_cutoff = latest_added[foreign_key["references"].split(".")[0]]
     referenced = [
         (c["source_column"], loaded_keys[f"{role}.{c['source_column']}"])
         for c in columns
@@ -321,7 +356,7 @@ def load_dataset(
     rejected: list[tuple[str, int, str, str, str]] = []
     reasons: collections.Counter[str] = collections.Counter()
     nulled: collections.Counter[str] = collections.Counter()
-    source_rows = loaded_rows = trait_uri_invalid_rows = 0
+    source_rows = loaded_rows = orphan_rows = trait_uri_invalid_rows = 0
     # Child rows are spooled to disk and copied after their parents: one connection runs one COPY at a time.
     with tempfile.TemporaryFile() as snp_spool, tempfile.TemporaryFile() as trait_spool:
         with (
@@ -350,6 +385,19 @@ def load_dataset(
                 for column_name, i, loaded in foreign:
                     if parsed[column_name] is not None and parsed[column_name] not in loaded:
                         violations.append((column_name, "foreign_key", row[i]))
+                added = parsed.get(ORPHAN_DATE_COLUMN) if has_date else None
+                # An Orphan Row's only violation is its study missing from a studies file older than the row (#43).
+                if (
+                    orphan_cutoff is not None
+                    and len(violations) == 1
+                    and violations[0][1] == "foreign_key"
+                    and added is not None
+                    and added > orphan_cutoff
+                ):
+                    column_name, _, value = violations[0]
+                    rejected.append((path.name, line_number, column_name, "orphan", value))
+                    orphan_rows += 1
+                    continue
                 if violations:
                     # ponytail: held in memory until the threshold check; a format change can make this every row.
                     # Stream into a temp table if that ever matters.
@@ -366,6 +414,8 @@ def load_dataset(
                         )
                 for column_name, loaded in referenced:
                     loaded.add(parsed[column_name])
+                if added is not None and (latest is None or added > latest):
+                    latest = added
                 loaded_rows += 1
                 # From here on values lines up with curated, which trait_key_index points into.
                 if "surrogate_key" in dataset:
@@ -388,7 +438,9 @@ def load_dataset(
                 values.append(line_number)
                 copy.write_row(values)
 
-        rejected_rows = source_rows - loaded_rows
+        if has_date:
+            latest_added[role] = latest
+        rejected_rows = source_rows - loaded_rows - orphan_rows
         ratio = rejected_rows / source_rows if source_rows else 0.0
         threshold = dataset["rejection_threshold"]
         report = {
@@ -403,9 +455,21 @@ def load_dataset(
         if trait_column:
             # Dropped URI tokens flag their row but do not make it a Rejected Row.
             report["trait_uri_invalid_rows"] = trait_uri_invalid_rows
+        if "orphan_threshold" in dataset:
+            report.update(
+                orphan_rows=orphan_rows,
+                orphan_ratio=orphan_rows / source_rows if source_rows else 0.0,
+                orphan_threshold=dataset["orphan_threshold"],
+                studies_latest_date_added=orphan_cutoff and orphan_cutoff.isoformat(),
+            )
         log(f"Load report for {role}: {json.dumps(report, ensure_ascii=False)}")
         if ratio > threshold:
             raise LoaderError(f"{role}: Rejected Row ratio {ratio:.4%} exceeds Rejection Threshold {threshold:.4%}")
+        if "orphan_threshold" in dataset and report["orphan_ratio"] > dataset["orphan_threshold"]:
+            raise LoaderError(
+                f"{role}: Orphan Row ratio {report['orphan_ratio']:.4%} "
+                f"exceeds orphan_threshold {dataset['orphan_threshold']:.4%}"
+            )
         with conn.cursor().copy(
             "COPY rejected_row (source_file, source_line, source_column, reason, value) FROM STDIN"
         ) as copy:
@@ -456,13 +520,14 @@ def build_release_schema(
         for rule in dataset["dataset_rules"]
         if rule["rule"] == "foreign_key"
     }
+    latest_added: dict[str, dt.date | None] = {}
     # The DDL PRIMARY KEY / REFERENCES constraints stay as a safety net behind the loader's dataset rules.
     conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
     conn.execute(sql.SQL("SET LOCAL search_path TO {}").format(sql.Identifier(schema)))
     conn.execute(RELEASE_SCHEMA_DDL.read_text(encoding="utf-8"))
     return {
         dataset["role"]: load_dataset(
-            conn, snapshot_dir / files_by_role[dataset["role"]]["filename"], dataset, loaded_keys
+            conn, snapshot_dir / files_by_role[dataset["role"]]["filename"], dataset, loaded_keys, latest_added
         )
         for dataset in datasets
     }
@@ -619,11 +684,12 @@ def rebuild(args: argparse.Namespace) -> str:
             raise LoaderError(f"{schema} already exists; rebuild only restores a dropped Release schema")
         report = build_release_schema(conn, schema, args.snapshot_dir, files, datasets)
         # The same inputs curate differently if the loader changed since the Release was loaded; roll back then.
+        # orphan_rows is absent from both for a dataset without an orphan_threshold, including Releases before #43.
         mismatches = [
-            f"{role} {key}: expected {expected}, rebuilt {counts[key]}"
+            f"{role} {key}: expected {expected}, rebuilt {counts.get(key)}"
             for role, counts in report.items()
-            for key in ("source_rows", "loaded_rows", "rejected_rows")
-            if (expected := recorded_report.get(role, {}).get(key)) != counts[key]
+            for key in ("source_rows", "loaded_rows", "rejected_rows", "orphan_rows")
+            if (expected := recorded_report.get(role, {}).get(key)) != counts.get(key)
         ]
         if mismatches:
             raise LoaderError(

@@ -1,7 +1,7 @@
 {
   "contract": "gwas-curation-contract",
   "dataset": "nhgri-ebi-gwas-catalog",
-  "version": 1,
+  "version": 2,
   "genome_build": "GRCh38",
   "genome_build_applies_to": [
     "published_associations.CHR_POS",
@@ -21,6 +21,7 @@
       "reject_row": "row becomes a Rejected Row (Required Field)",
       "null": "value stored as NULL; original kept in *_text when keep_text"
     },
+    "orphan_threshold": "where set, a row whose only violation is its foreign_key study missing from the referenced file, with DATE ADDED TO CATALOG after that file's latest, becomes an Orphan Row: kept out of the Curated Layer like a Rejected Row but not counted toward rejection_threshold; over orphan_threshold the load fails (ADR-0007)",
     "addresses_source": "Review Queue issue codes in the profile report"
   },
   "type_vocabulary": {
@@ -392,6 +393,7 @@
       "curated_table": "association",
       "surrogate_key": "association_id",
       "rejection_threshold": 0.001,
+      "orphan_threshold": 0.05,
       "dataset_rules": [
         {
           "rule": "foreign_key",

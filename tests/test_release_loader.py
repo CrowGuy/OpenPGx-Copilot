@@ -99,6 +99,22 @@ def association_with_unknown_study(header: list[str], rows: list[list[str]]) -> 
     rows[1][header.index("STUDY ACCESSION")] = "GCST999999"
 
 
+def association_of_newer_unknown_study(header: list[str], rows: list[list[str]]) -> None:
+    """Line 3 points at a study missing from published_studies and was added after its latest date (2024-08-29)."""
+    rows[1][header.index("STUDY ACCESSION")] = "GCST999999"
+    rows[1][header.index("DATE ADDED TO CATALOG")] = "2024-09-01"
+
+
+def associations_of_unknown_studies_that_are_not_orphans(header: list[str], rows: list[list[str]]) -> None:
+    """Line 3: unknown study with an invalid DATE ADDED. Line 4: unknown newer study with an invalid P-VALUE too."""
+    col = header.index
+    rows[1][col("STUDY ACCESSION")] = "GCST999999"
+    rows[1][col("DATE ADDED TO CATALOG")] = "2024-13-01"
+    rows[2][col("STUDY ACCESSION")] = "GCST999998"
+    rows[2][col("DATE ADDED TO CATALOG")] = "2024-09-01"
+    rows[2][col("P-VALUE")] = "abc"
+
+
 def ancestries_with_violations(header: list[str], rows: list[list[str]]) -> None:
     """Lines 3-5: a STAGE outside the enum, an empty STAGE and a study that is not in published_studies."""
     col = header.index
@@ -245,6 +261,12 @@ class PreLoadValidationTest(unittest.TestCase):
             split_rule = next(c for c in columns if c["source_column"] == "MAPPED_TRAIT_URI")["split_rule"]
             split_rule["foreign_key_to_trait_mappings"] = True
 
+        def orphan_threshold_over_one(contract: dict) -> None:
+            dataset_of(contract, "published_associations")["orphan_threshold"] = 2
+
+        def orphan_threshold_without_foreign_key(contract: dict) -> None:
+            dataset_of(contract, "published_studies")["orphan_threshold"] = 0.05
+
         def unknown_split_target(contract: dict) -> None:
             columns = dataset_of(contract, "published_studies")["columns"]
             next(c for c in columns if c["source_column"] == "MAPPED_TRAIT")["split_rule"] = {"target_table": "x"}
@@ -259,6 +281,8 @@ class PreLoadValidationTest(unittest.TestCase):
             "published_associations.SNPS: unsupported SNPS split_rule policy": unsupported_snp_policy,
             "published_studies.MAPPED_TRAIT_URI: unsupported trait URI split_rule policy": unsupported_trait_policy,
             "published_studies.MAPPED_TRAIT: unsupported split_rule target_table 'x'": unknown_split_target,
+            "published_associations.orphan_threshold must be a number between 0 and 1": orphan_threshold_over_one,
+            "published_studies.orphan_threshold needs exactly one foreign_key rule": orphan_threshold_without_foreign_key,
         }
         for message, edit in cases.items():
             with self.subTest(message=message):
@@ -317,10 +341,12 @@ class ReleaseLoaderTest(unittest.TestCase):
         return self.loader.main(load_argv(snapshot, contract, DATASET_CONTRACT, ETL_DSN))
 
     def lenient_contract(self) -> Path:
-        """The real CurationContract with Rejection Thresholds the small fixtures can stay under."""
+        """The real CurationContract with Rejection Thresholds and orphan_thresholds the small fixtures stay under."""
         contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
         for dataset in contract["datasets"]:
             dataset["rejection_threshold"] = 0.1
+            if "orphan_threshold" in dataset:
+                dataset["orphan_threshold"] = 0.1
         path = self.tmp / "contract.json"
         path.write_text(json.dumps(contract), encoding="utf-8")
         return path
@@ -361,7 +387,8 @@ class ReleaseLoaderTest(unittest.TestCase):
             "FROM meta.release WHERE release_id = %s",
             (RELEASE,),
         )
-        self.assertEqual(rows, [(manifest_sha, 1, contract_sha, "GRCh38")])
+        version = json.loads(CONTRACT.read_text(encoding="utf-8"))["version"]
+        self.assertEqual(rows, [(manifest_sha, version, contract_sha, "GRCh38")])
 
     def test_first_promote_makes_study_queryable_by_accession(self) -> None:
         self.assertEqual(self.load(), 0)
@@ -550,9 +577,13 @@ class ReleaseLoaderTest(unittest.TestCase):
         def bump_version(contract: dict) -> None:
             contract["version"] += 1
 
+        bumped = json.loads(CONTRACT.read_text(encoding="utf-8"))["version"] + 1
         cases = [
             (dict(snapshot=make_snapshot(self.tmp, RELEASE, drop_last_study)), "RawSnapshot manifest sha256"),
-            (dict(contract=edited_json(CONTRACT, self.tmp / "v2.json", bump_version)), "CurationContract version 2"),
+            (
+                dict(contract=edited_json(CONTRACT, self.tmp / "bumped.json", bump_version)),
+                f"CurationContract version {bumped}",
+            ),
             (dict(contract=edited_json(CONTRACT, self.tmp / "same.json", lambda c: None)), "CurationContract sha256"),
             (dict(release="r2000-01-02"), "RawSnapshot r2000-01-01 is not Release r2000-01-02"),
         ]
@@ -595,6 +626,23 @@ class ReleaseLoaderTest(unittest.TestCase):
         self.assertFalse(self.schema_exists())
         self.assertEqual(self.query(ETL_DSN, "SELECT to_regclass('gwas.study')"), [(None,)])
         self.assertEqual(self.query(ETL_DSN, "SELECT * FROM meta.release"), meta)
+
+    def test_rebuild_differing_in_orphan_rows_rolls_back(self) -> None:
+        contract = self.lenient_contract()
+        snapshot = make_snapshot(self.tmp, RELEASE, association_of_newer_unknown_study, ASSOCIATIONS_FILE)
+        self.assertEqual(self.load(snapshot, contract), 0)
+        self.assertEqual(self.promote(), 0)
+        self.drop_schema()
+        with psycopg.connect(ETL_DSN) as conn:
+            conn.execute(
+                "UPDATE meta.release SET load_report = "
+                "jsonb_set(load_report, '{published_associations,orphan_rows}', '0')"
+            )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            self.assertEqual(self.rebuild(snapshot=snapshot, contract=contract), 2)
+        self.assertIn("published_associations orphan_rows: expected 0, rebuilt 1", stderr.getvalue())
+        self.assertFalse(self.schema_exists())
 
     def test_rebuilt_release_beyond_the_kept_places_is_dropped_on_next_promote(self) -> None:
         self.assertEqual(self.load(), 0)
@@ -816,6 +864,63 @@ class ReleaseLoaderTest(unittest.TestCase):
             ETL_DSN, "SELECT load_report -> 'published_associations' FROM meta.release WHERE release_id = 'r2000-01-02'"
         )[0]
         self.assertEqual(report["rejection_reasons"], {"STUDY ACCESSION: foreign_key": 1})
+
+    def test_newer_row_of_unknown_study_becomes_orphan_row(self) -> None:
+        # The studies file lags associations (#43): kept out like a Rejected Row, but not counted as one (ADR-0007).
+        snapshot = make_snapshot(self.tmp, "r2000-01-02", association_of_newer_unknown_study, ASSOCIATIONS_FILE)
+        self.assertEqual(self.load(snapshot, self.lenient_contract()), 0)
+        rows = self.query(
+            ETL_DSN, "SELECT source_file, source_line, source_column, reason, value FROM gwas_r2000_01_02.rejected_row"
+        )
+        self.assertEqual(rows, [(ASSOCIATIONS_FILE, 3, "STUDY ACCESSION", "orphan", "GCST999999")])
+        self.assertEqual(self.query(ETL_DSN, "SELECT count(*) FROM gwas_r2000_01_02.association"), [(12,)])
+        (report,) = self.query(
+            ETL_DSN, "SELECT load_report -> 'published_associations' FROM meta.release WHERE release_id = 'r2000-01-02'"
+        )[0]
+        self.assertEqual(
+            {key: report[key] for key in ("source_rows", "loaded_rows", "rejected_rows", "rejection_reasons")},
+            {"source_rows": 13, "loaded_rows": 12, "rejected_rows": 0, "rejection_reasons": {}},
+        )
+        orphan_keys = ("orphan_rows", "orphan_ratio", "orphan_threshold", "studies_latest_date_added")
+        self.assertEqual([report[key] for key in orphan_keys], [1, 1 / 13, 0.1, "2024-08-29"])
+
+    def test_unknown_study_with_invalid_date_or_other_violation_stays_rejected_row(self) -> None:
+        snapshot = make_snapshot(
+            self.tmp, "r2000-01-02", associations_of_unknown_studies_that_are_not_orphans, ASSOCIATIONS_FILE
+        )
+        # 2 Rejected Rows of 13 are over the lenient 10%.
+        contract = edited_json(
+            self.lenient_contract(),
+            self.tmp / "contract-20.json",
+            lambda c: dataset_of(c, "published_associations").update(rejection_threshold=0.2),
+        )
+        self.assertEqual(self.load(snapshot, contract), 0)
+        rows = self.query(
+            ETL_DSN,
+            "SELECT source_line, source_column, reason, value FROM gwas_r2000_01_02.rejected_row "
+            "ORDER BY source_line, source_column",
+        )
+        self.assertEqual(
+            rows,
+            [
+                (3, "STUDY ACCESSION", "foreign_key", "GCST999999"),
+                (4, "P-VALUE", "invalid_p_value", "abc"),
+                (4, "STUDY ACCESSION", "foreign_key", "GCST999998"),
+            ],
+        )
+        (report,) = self.query(
+            ETL_DSN, "SELECT load_report -> 'published_associations' FROM meta.release WHERE release_id = 'r2000-01-02'"
+        )[0]
+        self.assertEqual((report["rejected_rows"], report["orphan_rows"]), (2, 0))
+
+    def test_orphan_rows_over_orphan_threshold_fail_load(self) -> None:
+        # The real CurationContract: 1 of 13 rows (7.7%) is over its orphan_threshold.
+        snapshot = make_snapshot(self.tmp, "r2000-01-02", association_of_newer_unknown_study, ASSOCIATIONS_FILE)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            self.assertNotEqual(self.load(snapshot), 0)
+        self.assertIn("published_associations: Orphan Row ratio 7.6923% exceeds orphan_threshold", stderr.getvalue())
+        self.assertEqual(self.query(ETL_DSN, "SELECT count(*) FROM meta.release"), [(0,)])
 
     def test_curated_rows_trace_back_to_their_source_lines(self) -> None:
         snapshot = make_snapshot(self.tmp, "r2000-01-02", association_with_unknown_study, ASSOCIATIONS_FILE)
