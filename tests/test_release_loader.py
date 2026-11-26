@@ -884,6 +884,19 @@ class ReleaseLoaderTest(unittest.TestCase):
         orphan_keys = ("orphan_rows", "orphan_ratio", "orphan_threshold", "studies_latest_date_added")
         self.assertEqual([report[key] for key in orphan_keys], [1, 1 / 13, 0.1, "2024-08-29"])
 
+    def test_studies_latest_date_added_counts_rejected_study_rows(self) -> None:
+        # GCST005844 (line 21, 2024-08-29) is the latest study; an empty accession makes it a Rejected Row. Counting it
+        # keeps the associations of a rejected study Rejected Rows instead of Orphan Rows.
+        def reject_latest_study(header: list[str], rows: list[list[str]]) -> None:
+            rows[19][header.index("STUDY ACCESSION")] = ""
+
+        snapshot = make_snapshot(self.tmp, "r2000-01-02", reject_latest_study)
+        self.assertEqual(self.load(snapshot, self.lenient_contract()), 0)
+        (report,) = self.query(
+            ETL_DSN, "SELECT load_report -> 'published_associations' FROM meta.release WHERE release_id = 'r2000-01-02'"
+        )[0]
+        self.assertEqual(report["studies_latest_date_added"], "2024-08-29")
+
     def test_unknown_study_with_invalid_date_or_other_violation_stays_rejected_row(self) -> None:
         snapshot = make_snapshot(
             self.tmp, "r2000-01-02", associations_of_unknown_studies_that_are_not_orphans, ASSOCIATIONS_FILE

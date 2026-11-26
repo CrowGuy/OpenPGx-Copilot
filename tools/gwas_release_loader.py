@@ -93,6 +93,18 @@ def schema_for(release_id: str) -> str:
     return "gwas_" + release_id.replace("-", "_")
 
 
+def has_date_column(dataset: dict[str, Any] | None) -> bool:
+    """Whether `dataset` curates ORPHAN_DATE_COLUMN as a date, which Orphan Rows are told apart by."""
+    return dataset is not None and any(
+        c.get("source_column") == ORPHAN_DATE_COLUMN and c.get("curated_type") == "date" for c in dataset["columns"]
+    )
+
+
+def referenced_roles(dataset: dict[str, Any]) -> list[str]:
+    """The role each foreign_key rule of `dataset` references ("<role>.<source column>")."""
+    return [str(r.get("references")).split(".")[0] for r in dataset["dataset_rules"] if r["rule"] == "foreign_key"]
+
+
 def loaded_datasets(contract: Any) -> list[dict[str, Any]]:
     """Return the CurationContract datasets of LOADED_ROLES.
 
@@ -106,11 +118,6 @@ def loaded_datasets(contract: Any) -> list[dict[str, Any]]:
 
     def is_ratio(value: Any) -> bool:
         return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1
-
-    def has_date_column(dataset: dict[str, Any] | None) -> bool:
-        return dataset is not None and any(
-            c.get("source_column") == ORPHAN_DATE_COLUMN and c.get("curated_type") == "date" for c in dataset["columns"]
-        )
 
     require(isinstance(contract, dict), "root must be an object")
     require(type(contract.get("version")) is int, "version must be an integer")
@@ -185,11 +192,9 @@ def loaded_datasets(contract: Any) -> list[dict[str, Any]]:
             continue
         role = dataset["role"]
         require(is_ratio(dataset["orphan_threshold"]), f"{role}.orphan_threshold must be a number between 0 and 1")
-        foreign_keys = [rule for rule in dataset["dataset_rules"] if rule["rule"] == "foreign_key"]
+        references = referenced_roles(dataset)
         require(
-            len(foreign_keys) == 1
-            and has_date_column(dataset)
-            and has_date_column(by_role.get(str(foreign_keys[0].get("references")).split(".")[0])),
+            len(references) == 1 and has_date_column(dataset) and has_date_column(by_role.get(references[0])),
             f"{role}.orphan_threshold needs exactly one foreign_key rule, and a {ORPHAN_DATE_COLUMN} date column "
             "in this dataset and in the one it references",
         )
@@ -297,7 +302,8 @@ def load_dataset(
     """COPY one dataset into its curated table and return its load report.
 
     `loaded_keys` maps each foreign_key reference ("<role>.<source column>") to the values loaded so far.
-    `latest_added` maps each loaded role with an ORPHAN_DATE_COLUMN to its latest loaded date; this adds `role`.
+    `latest_added` maps each loaded role with an ORPHAN_DATE_COLUMN to its latest valid date over all source rows; this
+    adds `role`.
     """
     role, columns = dataset["role"], dataset["columns"]
     header = read_header(path)
@@ -314,12 +320,12 @@ def load_dataset(
         elif rule["rule"] == "foreign_key":
             (column,) = rule["columns"]
             foreign.append((column, header.index(column), loaded_keys[rule["references"]]))
-    has_date = any(c["source_column"] == ORPHAN_DATE_COLUMN and c["curated_type"] == "date" for c in columns)
+    has_date = has_date_column(dataset)
     latest: dt.date | None = None
     orphan_cutoff: dt.date | None = None
     if "orphan_threshold" in dataset:
-        (foreign_key,) = [rule for rule in dataset["dataset_rules"] if rule["rule"] == "foreign_key"]
-        orphan_cutoff = latest_added[foreign_key["references"].split(".")[0]]
+        (referenced_role,) = referenced_roles(dataset)
+        orphan_cutoff = latest_added[referenced_role]
     referenced = [
         (c["source_column"], loaded_keys[f"{role}.{c['source_column']}"])
         for c in columns
@@ -386,6 +392,9 @@ def load_dataset(
                     if parsed[column_name] is not None and parsed[column_name] not in loaded:
                         violations.append((column_name, "foreign_key", row[i]))
                 added = parsed.get(ORPHAN_DATE_COLUMN) if has_date else None
+                # Over every source row, Rejected Rows too: the date of the whole file, as RawSnapshot reports it.
+                if added is not None and (latest is None or added > latest):
+                    latest = added
                 # An Orphan Row's only violation is its study missing from a studies file older than the row (#43).
                 if (
                     orphan_cutoff is not None
@@ -414,8 +423,6 @@ def load_dataset(
                         )
                 for column_name, loaded in referenced:
                     loaded.add(parsed[column_name])
-                if added is not None and (latest is None or added > latest):
-                    latest = added
                 loaded_rows += 1
                 # From here on values lines up with curated, which trait_key_index points into.
                 if "surrogate_key" in dataset:
